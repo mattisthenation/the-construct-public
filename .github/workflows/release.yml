@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --locked --bin construct --target ${{ matrix.target }}
+
+      - name: Package tarball
+        id: package
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          target="${{ matrix.target }}"
+          staging="construct-${tag}-${target}"
+          mkdir -p "${staging}"
+
+          # Binary (already stripped via [profile.release] strip = true; strip
+          # again defensively in case that profile setting ever changes).
+          cp "target/${target}/release/construct" "${staging}/construct"
+          strip "${staging}/construct" || true
+
+          # Licenses are required to ship in every artifact.
+          cp LICENSE-MIT "${staging}/LICENSE-MIT"
+          cp LICENSE-APACHE "${staging}/LICENSE-APACHE"
+
+          # Ship the editable prompt templates if they exist.
+          if [ -d prompts ]; then
+            cp -R prompts "${staging}/prompts"
+          fi
+
+          tarball="${staging}.tar.gz"
+          tar -czf "${tarball}" "${staging}"
+
+          # Checksum file: "<sha256>  <tarball>" (shasum -a 256 format).
+          shasum -a 256 "${tarball}" > "${tarball}.sha256"
+
+          echo "tarball=${tarball}" >> "${GITHUB_OUTPUT}"
+          echo "checksum_file=${tarball}.sha256" >> "${GITHUB_OUTPUT}"
+
+      - name: Print checksum
+        run: |
+          echo "::group::sha256 for ${{ steps.package.outputs.tarball }}"
+          cat "${{ steps.package.outputs.checksum_file }}"
+          echo "::endgroup::"
+          echo "Paste this sha256 into HomebrewFormula/construct.rb for ${{ matrix.target }}"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package.outputs.tarball }}
+            ${{ steps.package.outputs.checksum_file }}
