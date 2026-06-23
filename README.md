@@ -7,7 +7,7 @@ vault (or any plain folder of `.md` files) — not a plugin, a guest that runs
 beside it.
 
 ```sh
-brew install construct                       # see docs/install.md
+brew install Websites-On-Computers/the-construct/construct   # see docs/install.md
 
 echo "Remind me to call the dentist tomorrow at 5pm #theconstruct/remind-me" > vault/note.md
 construct run vault/note.md

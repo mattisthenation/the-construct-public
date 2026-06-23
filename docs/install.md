@@ -5,11 +5,10 @@ path fits you.
 
 ## Install via Homebrew (macOS)
 
-The Construct is distributed through a Homebrew tap. Tap it, then install:
+The Construct is distributed through a Homebrew tap. One line:
 
 ```sh
-brew tap mattisthenation/the-construct https://github.com/mattisthenation/the-construct-public
-brew install construct
+brew install Websites-On-Computers/the-construct/construct
 ```
 
 This pulls a prebuilt binary for your architecture (Apple Silicon or Intel).
@@ -27,12 +26,12 @@ brew update
 brew upgrade construct
 ```
 
-> **Tap layout note.** The formula currently lives **in this repo** under
-> [`HomebrewFormula/construct.rb`](../HomebrewFormula/construct.rb). For a real
-> public tap it would move to a dedicated `homebrew-the-construct` repository
-> (Homebrew taps are repos named `homebrew-<tap>`), so the tap command above
-> resolves to `mattisthenation/homebrew-the-construct`. Until that repo exists,
-> you can install the in-repo formula locally for testing:
+> **Tap layout.** The tap lives at
+> [`Websites-On-Computers/homebrew-the-construct`](https://github.com/Websites-On-Computers/homebrew-the-construct)
+> (Homebrew taps are repos named `homebrew-<tap>`), so `…/the-construct/construct`
+> resolves there. The same formula is mirrored in this repo under
+> [`HomebrewFormula/construct.rb`](../HomebrewFormula/construct.rb); to install it
+> directly from a clone (e.g. to test an unreleased change):
 >
 > ```sh
 > brew install --formula ./HomebrewFormula/construct.rb
@@ -83,11 +82,15 @@ Releases are tag-driven and fully automated by
    uploads a `.sha256` checksum file, and prints the checksum to the Actions
    log (look for the "Print checksum" step / the "Paste this sha256…" line).
 
-3. **Update the formula.** Open `HomebrewFormula/construct.rb`, bump `version`,
-   and replace the two placeholder checksums with the real values:
-   - `PLACEHOLDER_SHA256_ARM` → sha256 of the `aarch64-apple-darwin` tarball
-   - `PLACEHOLDER_SHA256_INTEL` → sha256 of the `x86_64-apple-darwin` tarball
+3. **Update the formula** in **both** places (they're kept in sync): bump
+   `version` and set the two `sha256` values to the real checksums from the
+   release:
+   - the `aarch64-apple-darwin` tarball's sha256 → the `on_arm` block
+   - the `x86_64-apple-darwin` tarball's sha256 → the `on_intel` block
 
-   Then commit the formula (and, once the dedicated tap repo exists, sync it
-   there). Config and state live under `~/.config/construct` and survive
-   upgrades, so `brew upgrade construct` is a safe, clean update path.
+   The formula lives at `HomebrewFormula/construct.rb` in this repo and at
+   `Formula/construct.rb` in the tap repo
+   [`Websites-On-Computers/homebrew-the-construct`](https://github.com/Websites-On-Computers/homebrew-the-construct)
+   — `brew install` reads the tap copy, so that one must be updated for users to
+   get the new version. Config and state live under `~/.config/construct` and
+   survive upgrades, so `brew upgrade construct` is a safe, clean update path.
