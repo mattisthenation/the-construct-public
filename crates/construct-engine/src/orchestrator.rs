@@ -11,6 +11,12 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Upper bound on a note we'll read into memory. A note larger than this is a
+/// pathological/abusive input, not a real note — skip it rather than risk
+/// exhausting RAM. 4 MiB is far above any hand-written markdown note.
+// ponytail: a fixed cap, not config — bump the const if a real vault needs more.
+pub const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Write file contents atomically: write a sibling temp file then rename over the
 /// target, so a crash mid-write can never truncate/corrupt an existing note.
 fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
@@ -112,6 +118,45 @@ impl Orchestrator {
                 existing.status,
                 RunStatus::Done | RunStatus::Rejected | RunStatus::Error
             ) {
+                return Ok(());
+            }
+        }
+
+        // DoS guard: refuse a pathologically large note BEFORE reading it into
+        // memory, so one bad file can't exhaust RAM or wedge the queue. Record it
+        // as a failed run (without rewriting the file) and move on.
+        if let Ok(meta) = std::fs::metadata(path) {
+            if meta.len() > MAX_NOTE_BYTES {
+                let run_id = RunId::new();
+                self.store
+                    .create_run(&RunRecord {
+                        id: run_id.clone(),
+                        rule: self.rule.clone(),
+                        agent: self.agent.clone(),
+                        note_path: note_path.clone(),
+                        status: RunStatus::Queued,
+                        error: None,
+                    })
+                    .await?;
+                self.store
+                    .update_status(
+                        &run_id,
+                        RunStatus::Error,
+                        Some(format!("note exceeds max size of {MAX_NOTE_BYTES} bytes")),
+                    )
+                    .await?;
+                self.store
+                    .append_event(
+                        &run_id,
+                        "guard",
+                        "too_large",
+                        serde_json::json!({"bytes": meta.len(), "max": MAX_NOTE_BYTES}),
+                    )
+                    .await?;
+                tracing::warn!(
+                    "skipping oversized note ({} bytes): {note_path}",
+                    meta.len()
+                );
                 return Ok(());
             }
         }
@@ -1334,6 +1379,33 @@ mod tests {
         let after = std::fs::read_to_string(&note_path).unwrap();
         assert!(after.contains("construct_status: review"));
         assert!(after.contains("construct_proposed_move: Reference"));
+    }
+
+    #[tokio::test]
+    async fn oversized_note_is_skipped_without_reading() {
+        use crate::testkit::PanicModel;
+        let dir = tempfile::tempdir().unwrap();
+        let note_path = dir.path().join("huge.md");
+        // Write a note just over the cap; the guard must refuse it.
+        let big = "x".repeat((MAX_NOTE_BYTES + 1) as usize);
+        std::fs::write(&note_path, &big).unwrap();
+        let mut o = orch(Arc::new(PanicModel)).await;
+        o.pipeline = PipelineKind::RemindMe;
+        o.rule = "remind-me".into();
+        o.vault_path = dir.path().to_path_buf();
+        o.handle(VaultEvent::NoteTagged {
+            path: note_path.clone(),
+            tag: "theconstruct/remind-me".into(),
+        })
+        .await
+        .unwrap();
+        // The run is recorded as an error; the giant file is NOT rewritten.
+        let runs = o.store.list_runs(10).await.unwrap();
+        assert_eq!(runs[0].status, RunStatus::Error);
+        assert_eq!(
+            std::fs::read_to_string(&note_path).unwrap().len(),
+            big.len()
+        );
     }
 
     #[tokio::test]

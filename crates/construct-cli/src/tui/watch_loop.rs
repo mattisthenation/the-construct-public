@@ -140,6 +140,16 @@ pub fn build_orchestrator(
 pub async fn run_once(cfg: Config, base_dir: PathBuf, note: PathBuf) -> anyhow::Result<()> {
     let abs = std::fs::canonicalize(&note)
         .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", note.display()))?;
+    // Same DoS guard as the daemon: don't read a pathologically large file.
+    if let Ok(meta) = std::fs::metadata(&abs) {
+        if meta.len() > construct_engine::orchestrator::MAX_NOTE_BYTES {
+            anyhow::bail!(
+                "note is {} bytes, exceeds max of {} bytes",
+                meta.len(),
+                construct_engine::orchestrator::MAX_NOTE_BYTES
+            );
+        }
+    }
     let text = std::fs::read_to_string(&abs)?;
     let parsed = construct_obsidian::frontmatter::Note::parse(&text);
     let tags = parsed.tags();
@@ -653,14 +663,19 @@ pub async fn run_watch(
                     let lock = lock_for(&note_locks, &path);
                     let ev_tx = events.clone();
                     tokio::spawn(async move {
+                        use futures::FutureExt;
                         let _guard = lock.lock().await;
                         let name = path
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
                         emit(&ev_tx, kind, format!("{name} → #{t}"));
-                        match o.handle(VaultEvent::NoteTagged { path, tag: t }).await {
-                            Ok(()) => {
+                        // catch_unwind so a panic in one handler is logged and
+                        // reported (not just silently dropped); the daemon and the
+                        // queue keep going, and reconcile recovers the note on restart.
+                        let fut = o.handle(VaultEvent::NoteTagged { path, tag: t });
+                        match std::panic::AssertUnwindSafe(fut).catch_unwind().await {
+                            Ok(Ok(())) => {
                                 let done = if kind == EventKind::Deterministic {
                                     format!("{name} done (no model call)")
                                 } else {
@@ -668,9 +683,17 @@ pub async fn run_watch(
                                 };
                                 emit(&ev_tx, kind, done)
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 tracing::error!("handler error: {e}");
                                 emit(&ev_tx, EventKind::Error, format!("{name}: {e}"));
+                            }
+                            Err(_) => {
+                                tracing::error!("handler PANICKED on {name}; loop continues");
+                                emit(
+                                    &ev_tx,
+                                    EventKind::Error,
+                                    format!("{name}: handler panicked"),
+                                );
                             }
                         }
                     });
