@@ -52,13 +52,58 @@ Ordered roughly by value toward Definition of Done.
 ## Needs maintainer decision (route around, don't block)
 - (none yet)
 
-## Deferred / parked
-- `scripts/{setup-home,update,release}.sh` still reference the old `entertheconstruct`
-  binary and `~/.theconstruct` single-folder dist model. These get rewritten or removed
-  wholesale when we build the Homebrew install flow (item 12), not patched piecemeal.
+## Deferred / parked (resolved)
+- Legacy `scripts/` (old single-folder dist model) were **removed**; distribution is now
+  the Homebrew tap + `release.yml`.
 
-## Definition of Done checklist
-1. ⬜ Tests/clippy/fmt/audit green  2. ⬜ 3 handlers demoable + remind-me zero-model
-3. ⬜ Homebrew-installable + doctor passes  4. ⬜ Fully configurable (remote Ollama via config only)
-5. ⬜ Daemon robust (malformed notes, outages, pathological input)  6. ⬜ TUI matches mockup + headless
-7. ⬜ Security audit + docs/security.md  8. ⬜ Public-ready docs + clean history
+## Definition of Done checklist — ALL MET ✅
+1. ✅ Tests/clippy/fmt/audit green — 218 tests, `clippy -D warnings` clean, `fmt --check` clean,
+   `cargo audit` 0 vulnerabilities (2 transitive ratatui warnings, documented/accepted).
+2. ✅ 3 handlers demoable + remind-me zero-model — verified `construct run` on the sample
+   vault for remind-me (zero model) and file-this (zero model on keyword match); both proven
+   via `PanicModel` tests. research-this pipeline intact (needs Ollama to run live).
+3. ✅ Homebrew-installable + doctor passes — `HomebrewFormula/construct.rb` + `release.yml`
+   build both mac arches; `doctor` passes on the sample vault. (First real release fills the
+   formula sha256 + publishes the tap — a maintainer step, documented in docs/install.md.)
+4. ✅ Fully configurable — XDG config, `$CONSTRUCT_HOME`/`--config` overrides; remote Ollama
+   or a cloud provider is a config-only change (base_url / provider / api_key_env).
+5. ✅ Daemon robust — per-note size cap (4 MiB), caught handler panics, per-note locks,
+   bounded timeouts/iterations, reconcile-on-restart; one bad note never wedges the loop.
+6. ✅ TUI matches mockup + headless — two panes (Activity + Recent Notes) over four boxes
+   (logo · digital rain · commands · status); `--headless` for backgrounding.
+7. ✅ Security audit complete — docs/security.md, no unmitigated release-blocker items.
+8. ✅ Public-ready docs + clean history — README (30s hook), configuration, handlers,
+   security, install, design-todo; conventional-commit history; no personal data
+   (CLAUDE.md untracked + gitignored, personal artifacts removed).
+
+---
+
+## LAUNCH-READINESS SUMMARY (loop exit, 2026-06-23)
+
+**The Construct is at the launch bar.** Starting from a non-building pile of copied crates,
+the loop delivered a distributable, installable, configurable, updatable tool.
+
+**What shipped**
+- A single Rust binary `construct` (workspace of 9 crates) with subcommands
+  `setup / init / config-check / doctor / run / watch / status / runs`.
+- The deterministic-first thesis made real and *checkable*: **Priori** (judgment seam,
+  `priori::judge`) → **Determa** (deterministic pipelines). `remind-me` is fully
+  deterministic (proven zero model calls); `file-this` is deterministic-first (keyword
+  rules → folder, escalating to a model only on a miss); `research-this` is the escalation
+  path with source-grounding.
+- LLM-agnostic, local-first: Ollama default + opt-in Anthropic / OpenAI-compatible cloud.
+  Zero egress with an Ollama-only config; the cloud boundary is explicit and auditable.
+- A read-only TUI dashboard; robust always-on daemon; atomic vault writes; SSRF guard;
+  secrets via env-var name only.
+- Packaging: Homebrew formula + tag-driven release workflow; CI runs fmt/clippy/test/audit.
+- Docs: README, configuration, handlers, security, install, design-todo, sample vault.
+
+**Known follow-ups (non-blocking, for the maintainer)**
+- Publish a real `homebrew-the-construct` tap and fill the formula sha256 from the first
+  `vX.Y.Z` release (the release workflow prints them).
+- Optional hardening parity: extend the `catch_unwind` wrap to the Inbox/Broadcast routes;
+  make `MAX_NOTE_BYTES` config-driven.
+- Design assets (logo, rain styling, palette) — swap-in points marked; see docs/design-todo.md.
+- Live-model validation of the `research-this` prompt against a small local model.
+
+**Loop status: COMPLETE.** Per the build directive, halting rather than inventing new scope.
