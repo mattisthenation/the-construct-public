@@ -196,6 +196,83 @@ agent = "Librarian"
 # folder = "AI/DailyBriefs"
 "#;
 
+/// Install the tracing subscriber. When `file` is set, logs are appended there
+/// (no ANSI) so a live TUI stays clean; otherwise they go to stderr. Default level
+/// is `info`; override with `RUST_LOG` (e.g. `RUST_LOG=construct=debug`).
+fn init_logging(file: Option<&std::path::Path>) {
+    use tracing_subscriber::{fmt, EnvFilter};
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let to_file = file.and_then(|p| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .ok()
+    });
+    match to_file {
+        Some(f) => {
+            let _ = fmt()
+                .with_env_filter(filter)
+                .with_ansi(false)
+                .with_writer(move || f.try_clone().expect("clone log file handle"))
+                .try_init();
+        }
+        None => {
+            let _ = fmt()
+                .with_env_filter(filter)
+                .with_writer(std::io::stderr)
+                .try_init();
+        }
+    }
+}
+
+/// If the Inbox feature is on but its folder is missing, recreate it — asking
+/// first when interactive (and telling the user exactly what will happen), or
+/// recreating with a log line when headless (no TTY to prompt).
+fn ensure_inbox_folder(cfg: &Config) {
+    let Some(inbox) = &cfg.inbox else {
+        return;
+    };
+    let vault = crate::tui::watch_loop::expand_vault_path(&cfg.vault.path);
+    let dir = std::path::Path::new(&vault).join(&inbox.folder);
+    if dir.is_dir() {
+        return;
+    }
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() {
+        println!(
+            "\nThe Inbox is enabled but the folder \"{}/\" doesn't exist in your vault.",
+            inbox.folder
+        );
+        let create = dialoguer::Confirm::new()
+            .with_prompt(format!(
+                "Create \"{}/\" now so The Construct can watch it?",
+                inbox.folder
+            ))
+            .default(true)
+            .interact()
+            .unwrap_or(false);
+        if create {
+            match std::fs::create_dir_all(&dir) {
+                Ok(()) => println!("Created {}\n", dir.display()),
+                Err(e) => eprintln!("Could not create {}: {e}\n", dir.display()),
+            }
+        } else {
+            println!(
+                "Left it alone. The Inbox stays inactive until \"{}/\" exists.\n",
+                inbox.folder
+            );
+        }
+    } else {
+        // Headless (launchd/service): no TTY to prompt — recreate so the default-on
+        // feature works, and record it in the log.
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => tracing::info!("re-created missing inbox folder {}", dir.display()),
+            Err(e) => tracing::warn!("could not create inbox folder {}: {e}", dir.display()),
+        }
+    }
+}
+
 pub async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let config = resolve_config_path(cli.config);
@@ -206,6 +283,21 @@ pub async fn run() -> anyhow::Result<()> {
         _ => PathBuf::from("."),
     };
     let db_url = crate::tui::watch_loop::resolve_db_url(&base_dir);
+
+    // Route logs: when a full-screen TUI will own the terminal (the watch
+    // dashboard, or the no-subcommand TUI), send tracing to a log file under the
+    // config dir so it can't corrupt the rendered UI. Otherwise, stderr.
+    let tui_owns_terminal = {
+        use std::io::IsTerminal;
+        std::io::stdout().is_terminal()
+            && matches!(
+                &cli.command,
+                None | Some(Command::Watch { headless: false })
+            )
+    };
+    let log_file = tui_owns_terminal.then(|| base_dir.join("construct.log"));
+    init_logging(log_file.as_deref());
+
     match cli.command {
         Some(Command::Setup {
             non_interactive,
@@ -287,6 +379,10 @@ pub async fn run() -> anyhow::Result<()> {
         Some(Command::Watch { headless }) => {
             use std::io::IsTerminal;
             let cfg = Config::load(&config)?;
+            // Inbox is on by default. If its folder is gone, ask before recreating
+            // it (interactive), or recreate-with-a-log when headless. Done here,
+            // before the dashboard grabs the terminal, so the prompt is visible.
+            ensure_inbox_folder(&cfg);
             let (events, rx) = construct_engine::events::channel();
             let paused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let use_dashboard = !headless && std::io::stdout().is_terminal();
@@ -309,6 +405,11 @@ pub async fn run() -> anyhow::Result<()> {
                     daily_time: cfg.schedule.as_ref().map(|s| s.daily_time.clone()),
                     briefs_folder: cfg.briefs.as_ref().map(|b| b.folder.clone()),
                     db_url: db_url.clone(),
+                    inbox: cfg
+                        .inbox
+                        .as_ref()
+                        .map(|i| (i.folder.clone(), i.idle_minutes)),
+                    log_path: log_file.as_ref().map(|p| p.display().to_string()),
                 };
                 // Engine in a background task; dashboard owns the terminal.
                 // If the dashboard exits (q / Esc / error), the engine task is

@@ -15,16 +15,8 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Install a logging subscriber so the watcher's tracing output (run errors,
-    // skipped-feature warnings, scheduler/inbox activity) is actually visible.
-    // Default level is `info`; override with e.g. `RUST_LOG=construct=debug`.
-    // Logs go to stderr so stdout banners/TUI stay clean.
-    use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
-
+    // Logging is installed inside `commands::run` once the subcommand is known —
+    // when a full-screen TUI will own the terminal, logs are routed to a file so
+    // they can't corrupt the dashboard; otherwise they go to stderr.
     commands::run().await
 }

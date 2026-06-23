@@ -451,20 +451,10 @@ pub async fn run_watch(
     if let Some(inbox_cfg) = cfg.inbox.clone() {
         let tx_idle = tx.clone();
         let vault_root: std::path::PathBuf = shellexpand_tilde(&cfg.vault.path).into();
+        // The inbox folder is ensured (with a prompt when interactive) before the
+        // watcher starts — see `ensure_inbox_folder` in commands.rs. If it's still
+        // missing here (user declined), `scan_inbox` simply finds nothing.
         let inbox_dir = vault_root.join(&inbox_cfg.folder);
-        // Inbox is on by default, so make sure its folder exists — otherwise the
-        // poller would silently scan nothing forever (e.g. for a config created by
-        // `init` rather than `setup`, or if the folder was deleted). Creating the
-        // configured watch folder is expected, not surprising; log it if we did.
-        if !inbox_dir.is_dir() {
-            match std::fs::create_dir_all(&inbox_dir) {
-                Ok(()) => tracing::info!("created inbox folder {}", inbox_dir.display()),
-                Err(e) => tracing::warn!(
-                    "inbox enabled but folder {} is missing and could not be created: {e}",
-                    inbox_dir.display()
-                ),
-            }
-        }
         let journal_folder = cfg
             .journal
             .as_ref()

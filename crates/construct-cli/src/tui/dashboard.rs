@@ -1,12 +1,11 @@
 //! Live dashboard for `construct watch` — a terminal "ops console" with a hacker
-//! vibe (neon-green-on-black, digital rain) that still reads as a real status
-//! surface. Pure consumer of the EngineEvent broadcast — engine pipelines never
-//! block on the UI.
+//! vibe (neon-green-on-black) that still reads as a real status surface. Pure
+//! consumer of the EngineEvent broadcast — engine pipelines never block on the UI.
 //!
 //! Layout: a title bar, then a left column of two stacked panels (Activity over
-//! Recent Notes) beside a right column of four stacked boxes (logo, rain,
-//! commands, status). The daemon also runs headless; this is only a view.
-use crate::tui::rain::Rain;
+//! Recent Notes) beside a right column of four stacked boxes (logo, the
+//! deterministic-first meter, commands, and a roomy status box). The daemon also
+//! runs headless; this is only a view.
 use construct_core::store::{RunRecord, Store};
 use construct_engine::events::{EngineEvent, EventKind};
 use construct_store::SqliteStore;
@@ -74,16 +73,21 @@ pub struct DashboardCtx {
     pub daily_time: Option<String>,
     pub briefs_folder: Option<String>,
     pub db_url: String,
+    /// Inbox folder + idle minutes, when the inbox feature is on.
+    pub inbox: Option<(String, u64)>,
+    /// Where tracing logs are being written (so the user can `tail` them).
+    pub log_path: Option<String>,
 }
 
 struct State {
     activity: VecDeque<(EventKind, String, String)>, // kind, time, message
     recent: Vec<RunRecord>,                          // recently processed notes
-    processed: u64,                                  // lifetime events seen (for the footer pulse)
+    processed: u64,                                  // lifetime events seen
+    det: u64,                                        // notes handled with NO model
+    model: u64,                                      // notes that escalated to a model
     pending_review: usize,
     started: Instant,
     paused: bool,
-    rain: Rain,
 }
 
 pub async fn run_dashboard(
@@ -97,10 +101,11 @@ pub async fn run_dashboard(
         activity: VecDeque::with_capacity(200),
         recent: Vec::new(),
         processed: 0,
+        det: 0,
+        model: 0,
         pending_review: 0,
         started: Instant::now(),
         paused: false,
-        rain: Rain::new(),
     };
     let mut last_refresh = Instant::now() - Duration::from_secs(10);
 
@@ -113,6 +118,18 @@ pub async fn run_dashboard(
                         state.activity.pop_back();
                     }
                     state.processed = state.processed.saturating_add(1);
+                    // Tally completions for the deterministic-first meter. Each run
+                    // emits one " done" event; count it by how it was handled.
+                    if ev.message.contains(" done") {
+                        match ev.kind {
+                            EventKind::Deterministic => state.det = state.det.saturating_add(1),
+                            EventKind::Run
+                            | EventKind::Inbox
+                            | EventKind::Brief
+                            | EventKind::Daily => state.model = state.model.saturating_add(1),
+                            _ => {}
+                        }
+                    }
                     state.activity.push_front((ev.kind, ev.time, ev.message));
                 }
                 Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
@@ -132,7 +149,7 @@ pub async fn run_dashboard(
             last_refresh = Instant::now();
         }
 
-        if let Err(e) = terminal.draw(|f| draw(f, &ctx, &mut state)) {
+        if let Err(e) = terminal.draw(|f| draw(f, &ctx, &state)) {
             break Err(e.into());
         }
 
@@ -164,7 +181,7 @@ pub async fn run_dashboard(
     res
 }
 
-fn draw(f: &mut Frame, ctx: &DashboardCtx, state: &mut State) {
+fn draw(f: &mut Frame, ctx: &DashboardCtx, state: &State) {
     // Title bar on top; everything else is a left/right split below it.
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -275,15 +292,16 @@ fn draw_left(f: &mut Frame, area: Rect, state: &State) {
     );
 }
 
-/// Right column: Logo, Digital Rain, Commands, Status — four boxes stacked.
-fn draw_right(f: &mut Frame, ctx: &DashboardCtx, state: &mut State, area: Rect) {
+/// Right column: Logo, the deterministic-first meter, Commands, then a roomy
+/// Status box (stacked).
+fn draw_right(f: &mut Frame, ctx: &DashboardCtx, state: &State, area: Rect) {
     let boxes = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(5), // logo
-            Constraint::Min(4),    // rain (flexes to fill)
+            Constraint::Length(6), // deterministic-first meter (≈ logo size)
             Constraint::Length(5), // commands
-            Constraint::Length(9), // status (fits dot + up/queue/events/vault + daily/briefs)
+            Constraint::Min(7),    // status — the largest box, fills the rest
         ])
         .split(area);
 
@@ -293,8 +311,8 @@ fn draw_right(f: &mut Frame, ctx: &DashboardCtx, state: &mut State, area: Rect) 
         .block(panel("◈", false));
     f.render_widget(logo, boxes[0]);
 
-    // --- Digital rain ---
-    draw_rain(f, boxes[1], &mut state.rain);
+    // --- Deterministic-first meter (the thesis, quantified) ---
+    f.render_widget(meter_widget(state), boxes[1]);
 
     // --- Commands ---
     let key = |k: &str, label: &str| {
@@ -313,6 +331,48 @@ fn draw_right(f: &mut Frame, ctx: &DashboardCtx, state: &mut State, area: Rect) 
 
     // --- Status ---
     f.render_widget(status_widget(ctx, state), boxes[3]);
+}
+
+/// The deterministic-first meter: how many notes were handled with NO model vs
+/// escalated, and the local-handling percentage with a little bar. This is the
+/// product's whole claim, made live — and the number a self-hoster wants to brag
+/// about ("96% handled locally, zero tokens").
+fn meter_widget(state: &State) -> Paragraph<'static> {
+    let total = state.det + state.model;
+    // 100% local when nothing has escalated yet (total == 0 → checked_div is None).
+    let pct = state
+        .det
+        .saturating_mul(100)
+        .checked_div(total)
+        .unwrap_or(100);
+    // 10-cell bar.
+    let filled = (pct / 10) as usize;
+    let bar: String = "█".repeat(filled) + &"░".repeat(10 - filled);
+    let bar_color = if pct >= 80 {
+        NEON
+    } else if pct >= 50 {
+        GREEN
+    } else {
+        AMBER
+    };
+    let row = |label: &'static str, value: String, color: Color| {
+        Line::from(vec![
+            Span::styled(format!(" {label:<10}"), Style::default().fg(DIM)),
+            Span::styled(value, Style::default().fg(color)),
+        ])
+    };
+    Paragraph::new(vec![
+        row("no-model", state.det.to_string(), NEON),
+        row("escalated", state.model.to_string(), FG),
+        Line::from(vec![
+            Span::styled(format!(" {bar} "), Style::default().fg(bar_color)),
+            Span::styled(
+                format!("{pct}% local"),
+                Style::default().fg(bar_color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    ])
+    .block(panel("DETERMINISTIC", false))
 }
 
 fn status_widget<'a>(ctx: &'a DashboardCtx, state: &State) -> Paragraph<'a> {
@@ -358,48 +418,27 @@ fn status_widget<'a>(ctx: &'a DashboardCtx, state: &State) -> Paragraph<'a> {
         row("events", format!("{} processed", state.processed), FG),
         row("vault", vault, FG),
     ];
+    if let Some((folder, idle)) = &ctx.inbox {
+        lines.push(row("inbox", format!("{folder}/ · {idle}m idle"), FG));
+    }
     if let Some(t) = &ctx.daily_time {
         lines.push(row("daily", t.clone(), FG));
     }
     if let Some(b) = &ctx.briefs_folder {
         lines.push(row("briefs", format!("{b}/"), FG));
     }
+    if let Some(log) = &ctx.log_path {
+        lines.push(row("logs", tilde(log), DIM));
+    }
     Paragraph::new(lines).block(panel("STATUS", true))
 }
 
-/// Render the digital-rain panel. CPU-safe: we advance the animation exactly
-/// once per draw (the dashboard render loop is throttled to ~5fps by its 200ms
-/// event poll), and `Rain::step`/`Rain::cell` are O(area) integer math with no
-/// threads, timers, or per-cell syscalls.
-fn draw_rain(f: &mut Frame, area: Rect, rain: &mut Rain) {
-    let block = panel("RAIN", false);
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    if inner.width == 0 || inner.height == 0 {
-        return;
+/// Shorten a home-relative path to `~/…` for display.
+fn tilde(p: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if p.starts_with(&home) => format!("~{}", &p[home.len()..]),
+        _ => p.to_string(),
     }
-
-    rain.step(inner.width, inner.height);
-
-    let mut lines: Vec<Line> = Vec::with_capacity(inner.height as usize);
-    for row in 0..inner.height {
-        let mut spans: Vec<Span> = Vec::with_capacity(inner.width as usize);
-        for col in 0..inner.width {
-            match rain.cell(col, row) {
-                Some((g, tier)) => {
-                    let color = match tier {
-                        0 => NEON,  // head: brightest
-                        1 => GREEN, // body
-                        _ => DIM,   // tail: dim
-                    };
-                    spans.push(Span::styled(g.to_string(), Style::default().fg(color)));
-                }
-                None => spans.push(Span::raw(" ")),
-            }
-        }
-        lines.push(Line::from(spans));
-    }
-    f.render_widget(Paragraph::new(lines), inner);
 }
 
 #[cfg(test)]

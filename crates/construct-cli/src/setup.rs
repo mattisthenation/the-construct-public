@@ -58,15 +58,53 @@ pub fn upsert_env(existing: &str, key: &str, value: &str) -> String {
     out
 }
 
-/// Starter config with the vault path substituted into the template.
-pub fn generated_config(vault_path: &str) -> String {
-    // TOML basic-string escaping: a vault dir named e.g. `My "Notes"` must not
-    // produce an unparseable config on first run.
-    let escaped = vault_path.replace('\\', "\\\\").replace('"', "\\\"");
-    crate::commands::SAMPLE_CONFIG.replace(
-        "path = \"~/ObsidianVault\"",
-        &format!("path = \"{escaped}\""),
-    )
+/// TOML basic-string escaping: a value like `My "Notes"` must not produce an
+/// unparseable config.
+fn toml_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Starter config with the vault path and inbox folder substituted into the template.
+pub fn generated_config(vault_path: &str, inbox_folder: &str) -> String {
+    crate::commands::SAMPLE_CONFIG
+        .replace(
+            "path = \"~/ObsidianVault\"",
+            &format!("path = \"{}\"", toml_escape(vault_path)),
+        )
+        // The only `folder = "Inbox"` in the template is the [inbox] one.
+        .replace(
+            "folder = \"Inbox\"",
+            &format!("folder = \"{}\"", toml_escape(inbox_folder)),
+        )
+}
+
+/// Editable prompt templates, embedded so they can be deployed regardless of how
+/// the binary was installed. Users edit the copies in their config dir.
+const PROMPT_SCOUT: &str = include_str!("../../../prompts/scout.md");
+const PROMPT_LIBRARIAN: &str = include_str!("../../../prompts/librarian.md");
+const PROMPT_DAILY: &str = include_str!("../../../prompts/daily_summary.md");
+
+/// Write the prompt templates into `<home>/prompts/` (the config dir) so the
+/// configured `system_prompt_file` paths resolve. Never clobbers an edited file.
+fn deploy_prompts(home: &Path) -> anyhow::Result<()> {
+    let dir = home.join("prompts");
+    std::fs::create_dir_all(&dir)?;
+    let mut wrote = 0;
+    for (name, body) in [
+        ("scout.md", PROMPT_SCOUT),
+        ("librarian.md", PROMPT_LIBRARIAN),
+        ("daily_summary.md", PROMPT_DAILY),
+    ] {
+        let p = dir.join(name);
+        if !p.exists() {
+            std::fs::write(&p, body)?;
+            wrote += 1;
+        }
+    }
+    if wrote > 0 {
+        println!("  prompts: {wrote} template(s) → prompts/");
+    }
+    Ok(())
 }
 
 /// Write .env with owner-only permissions. Refuses to leave it looser.
@@ -143,7 +181,12 @@ pub async fn run_setup(config_path: &Path, home: &Path, args: SetupArgs) -> anyh
             (None, true) => anyhow::bail!("--non-interactive requires --vault on first run"),
             (None, false) => prompt_vault_path()?,
         };
-        let toml = generated_config(&shellexpand(&vault));
+        let inbox_folder = if args.non_interactive {
+            "Inbox".to_string()
+        } else {
+            prompt_inbox_folder()?
+        };
+        let toml = generated_config(&shellexpand(&vault), &inbox_folder);
         std::fs::create_dir_all(home)?;
         std::fs::write(config_path, &toml)?;
         println!("  config: {} (created)", config_path.display());
@@ -189,6 +232,11 @@ pub async fn run_setup(config_path: &Path, home: &Path, args: SetupArgs) -> anyh
     if !env_text.is_empty() {
         write_env_file(&env_path, &env_text)?;
         println!("  keys:   {} (mode 600)", env_path.display());
+    }
+
+    // --- Deploy editable prompt templates next to the config ---
+    if let Err(e) = deploy_prompts(home) {
+        eprintln!("  \u{26a0} could not deploy prompts: {e}");
     }
 
     // --- Seed the vault: create the Inbox folder + drop a readme guide ---
@@ -328,6 +376,22 @@ fn prompt_vault_path() -> anyhow::Result<String> {
     }
 }
 
+/// Ask which folder to use as the Inbox (drop-zone for auto-processed notes).
+/// Defaults to "Inbox". Empty input keeps the default.
+fn prompt_inbox_folder() -> anyhow::Result<String> {
+    use dialoguer::Input;
+    let folder: String = Input::new()
+        .with_prompt("Inbox folder — drop notes here to auto-process them")
+        .default("Inbox".to_string())
+        .interact_text()?;
+    let f = folder.trim();
+    Ok(if f.is_empty() {
+        "Inbox".to_string()
+    } else {
+        f.to_string()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,15 +414,24 @@ mod tests {
 
     #[test]
     fn config_from_template_substitutes_vault_path() {
-        let toml = generated_config("/Users/example/Vault");
+        let toml = generated_config("/Users/example/Vault", "Inbox");
         let cfg: construct_config::Config = toml::from_str(&toml).unwrap();
         cfg.validate().unwrap();
         assert_eq!(cfg.vault.path, "/Users/example/Vault");
+        assert_eq!(cfg.inbox.unwrap().folder, "Inbox");
+    }
+
+    #[test]
+    fn config_from_template_substitutes_inbox_folder() {
+        let toml = generated_config("/v", "📥 Capture");
+        let cfg: construct_config::Config = toml::from_str(&toml).unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.inbox.unwrap().folder, "📥 Capture");
     }
 
     #[test]
     fn config_from_template_escapes_toml_special_chars() {
-        let toml = generated_config(r#"/Users/m/My "Notes" Vault\x"#);
+        let toml = generated_config(r#"/Users/m/My "Notes" Vault\x"#, "Inbox");
         let cfg: construct_config::Config = toml::from_str(&toml).unwrap();
         assert_eq!(cfg.vault.path, r#"/Users/m/My "Notes" Vault\x"#);
     }
