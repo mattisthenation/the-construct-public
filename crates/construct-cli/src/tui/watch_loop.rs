@@ -130,6 +130,7 @@ pub fn build_orchestrator(
         exclude_dirs: cfg.actions.organize.exclude_dirs.clone(),
         prompt_dir: Some(base_dir.join("prompts")),
         briefs_folder: cfg.briefs.as_ref().map(|b| b.folder.clone()),
+        file_rules: cfg.actions.file_this.rules.clone(),
     })
 }
 
@@ -319,6 +320,7 @@ pub async fn run_watch(
                     exclude_dirs: cfg.actions.organize.exclude_dirs.clone(),
                     prompt_dir: Some(base_dir.join("prompts")),
                     briefs_folder: cfg.briefs.as_ref().map(|b| b.folder.clone()),
+                    file_rules: cfg.actions.file_this.rules.clone(),
                 }))
             }
         }
@@ -361,6 +363,7 @@ pub async fn run_watch(
                     exclude_dirs: cfg.actions.organize.exclude_dirs.clone(),
                     prompt_dir: Some(base_dir.join("prompts")),
                     briefs_folder: cfg.briefs.as_ref().map(|b| b.folder.clone()),
+                    file_rules: cfg.actions.file_this.rules.clone(),
                 }))
             }
         }

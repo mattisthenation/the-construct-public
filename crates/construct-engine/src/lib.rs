@@ -6,6 +6,7 @@ pub mod guard;
 pub mod orchestrator;
 pub mod pipeline;
 pub mod pipelines;
+pub mod priori;
 pub mod rules;
 pub mod testkit;
 pub mod triggers;

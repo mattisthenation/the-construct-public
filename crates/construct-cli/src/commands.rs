@@ -160,6 +160,15 @@ max_tags = 8
 [actions.organize]
 exclude_dirs = [".obsidian", ".trash"]
 
+# file-this deterministic routing: a note containing any of a rule's keywords is
+# filed into `folder` with NO model call (the deterministic-first path). Only notes
+# that match no rule escalate to the model. Edit/extend these to fit your vault.
+[actions.file_this]
+rules = [
+    { any_of = ["kubernetes", "k8s", "docker", "terraform"], folder = "Reference" },
+    { any_of = ["invoice", "receipt", "budget"], folder = "Finance" },
+]
+
 # --- Automations (Slice 3) — all OFF unless their table is present. Uncomment to enable. ---
 
 # Auto-process top-level notes dropped in the Inbox folder once they've been idle.

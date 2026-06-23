@@ -43,6 +43,8 @@ pub struct Orchestrator {
     pub prompt_dir: Option<std::path::PathBuf>,
     /// Vault-relative Daily Briefs folder ([briefs].folder), None when off.
     pub briefs_folder: Option<String>,
+    /// Deterministic file-this routing rules ([actions.file_this].rules).
+    pub file_rules: Vec<construct_config::FileRule>,
 }
 
 impl Orchestrator {
@@ -137,6 +139,7 @@ impl Orchestrator {
         use crate::pipelines::PipelineKind;
         match self.pipeline {
             PipelineKind::RemindMe => self.run_remind(&run_id, path, &original).await,
+            PipelineKind::FileThis => self.run_file_this(&run_id, path, &original).await,
             PipelineKind::Research => self.run_research(&run_id, path, &original).await,
             PipelineKind::Summarize => self.run_summarize(&run_id, path, &original).await,
             PipelineKind::Tag => self.run_tag(&run_id, path, &original).await,
@@ -196,6 +199,54 @@ impl Orchestrator {
             )
             .await?;
         Ok(())
+    }
+
+    /// file-this pipeline: Priori decides. If a deterministic keyword rule matches,
+    /// propose that folder with NO model call; otherwise escalate to the organize
+    /// (model) flow. Either way the move is applied only on human accept.
+    async fn run_file_this(
+        &self,
+        run_id: &RunId,
+        path: &Path,
+        original: &str,
+    ) -> anyhow::Result<()> {
+        self.store
+            .update_status(run_id, RunStatus::Running, None)
+            .await?;
+        let note = Note::parse(original);
+        match crate::priori::judge(
+            crate::pipelines::PipelineKind::FileThis,
+            &note.body,
+            &self.file_rules,
+        ) {
+            crate::priori::Decision::Deterministic(reason) => {
+                // Safe: a Deterministic verdict for FileThis implies a classify match.
+                let folder = crate::pipelines::file_this::classify(&note.body, &self.file_rules)
+                    .map(|(f, _)| f.to_string())
+                    .unwrap_or_default();
+                let current = std::fs::read_to_string(path)?;
+                write_atomic(
+                    path,
+                    &crate::pipelines::organize::apply_propose(&current, &folder, &reason),
+                )?;
+                self.store
+                    .update_status(run_id, RunStatus::Review, None)
+                    .await?;
+                self.store
+                    .append_event(
+                        run_id,
+                        "file-this",
+                        "review",
+                        serde_json::json!({"deterministic": true, "destination": folder, "reason": reason}),
+                    )
+                    .await?;
+                Ok(())
+            }
+            crate::priori::Decision::Escalate(_) => {
+                // No rule matched — fall back to the model-driven organize flow.
+                self.run_organize(run_id, path, original).await
+            }
+        }
     }
 
     /// Organize pipeline: agent loop → gate → propose a move for human review.
@@ -388,7 +439,11 @@ impl Orchestrator {
         let current = std::fs::read_to_string(path)?;
         match status {
             "accepted" => {
-                if self.pipeline == crate::pipelines::PipelineKind::Organize {
+                if matches!(
+                    self.pipeline,
+                    crate::pipelines::PipelineKind::Organize
+                        | crate::pipelines::PipelineKind::FileThis
+                ) {
                     let dest = crate::pipelines::organize::proposed_destination(&current)
                         .ok_or_else(|| anyhow::anyhow!("no proposed_move on note"))?;
                     let updated = crate::pipelines::organize::apply_accept(&current, &note_path);
@@ -424,7 +479,11 @@ impl Orchestrator {
                 }
             }
             "rejected" => {
-                if self.pipeline == crate::pipelines::PipelineKind::Organize {
+                if matches!(
+                    self.pipeline,
+                    crate::pipelines::PipelineKind::Organize
+                        | crate::pipelines::PipelineKind::FileThis
+                ) {
                     write_atomic(path, &crate::pipelines::organize::apply_reject(&current))?;
                 } else {
                     write_atomic(path, &apply_reject(&current))?;
@@ -1133,6 +1192,7 @@ mod tests {
             exclude_dirs: vec![],
             prompt_dir: None,
             briefs_folder: None,
+            file_rules: vec![],
         }
     }
 
@@ -1243,6 +1303,37 @@ mod tests {
         // The run was recorded as deterministic.
         let runs = o.store.list_runs(10).await.unwrap();
         assert_eq!(runs[0].status, RunStatus::Done);
+    }
+
+    #[tokio::test]
+    async fn file_this_deterministic_rule_files_with_zero_model_calls() {
+        use crate::testkit::PanicModel;
+        let dir = tempfile::tempdir().unwrap();
+        let note_path = dir.path().join("k.md");
+        std::fs::write(
+            &note_path,
+            "notes about k8s ingress #theconstruct/file-this",
+        )
+        .unwrap();
+        let mut o = orch(Arc::new(PanicModel)).await;
+        o.pipeline = PipelineKind::FileThis;
+        o.rule = "file-this".into();
+        o.vault_path = dir.path().to_path_buf();
+        o.file_rules = vec![construct_config::FileRule {
+            any_of: vec!["k8s".into()],
+            folder: "Reference".into(),
+        }];
+        // PanicModel would panic if the model were touched; a matching rule means
+        // file-this proposes deterministically.
+        o.handle(VaultEvent::NoteTagged {
+            path: note_path.clone(),
+            tag: "theconstruct/file-this".into(),
+        })
+        .await
+        .unwrap();
+        let after = std::fs::read_to_string(&note_path).unwrap();
+        assert!(after.contains("construct_status: review"));
+        assert!(after.contains("construct_proposed_move: Reference"));
     }
 
     #[tokio::test]
@@ -1584,6 +1675,7 @@ mod tests {
             exclude_dirs: vec![],
             prompt_dir: None,
             briefs_folder: None,
+            file_rules: vec![],
         };
 
         orch.handle_idle(&note_path).await.unwrap();
@@ -1650,6 +1742,7 @@ mod tests {
             exclude_dirs: vec![],
             prompt_dir: None,
             briefs_folder: None,
+            file_rules: vec![],
         };
 
         orch.handle_idle(&note_path).await.unwrap();
@@ -1724,6 +1817,7 @@ mod tests {
             exclude_dirs: vec![],
             prompt_dir: None,
             briefs_folder: None,
+            file_rules: vec![],
         };
 
         orch.run_daily_summary(today, "journal").await.unwrap();
@@ -1825,6 +1919,7 @@ mod tests {
             exclude_dirs: vec![],
             prompt_dir: None,
             briefs_folder: Some("AI/DailyBriefs".into()),
+            file_rules: vec![],
         };
 
         // 1. First run: brief is new, should process.
@@ -1910,6 +2005,7 @@ mod tests {
             exclude_dirs: vec![],
             prompt_dir: None,
             briefs_folder: None,
+            file_rules: vec![],
         };
 
         orch.handle_idle(&note_path).await.unwrap();

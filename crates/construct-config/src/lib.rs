@@ -78,6 +78,26 @@ pub struct ActionsCfg {
     pub tag: TagActionCfg,
     #[serde(default)]
     pub organize: OrganizeActionCfg,
+    #[serde(default)]
+    pub file_this: FileThisActionCfg,
+}
+
+/// Deterministic routing rules for the `file-this` handler. Each rule maps a set
+/// of keywords to a destination folder; the first rule with a keyword present in
+/// the note wins — with NO model call. Only when no rule matches does file-this
+/// escalate to the model. This is the deterministic-first gate for filing.
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+pub struct FileThisActionCfg {
+    #[serde(default)]
+    pub rules: Vec<FileRule>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct FileRule {
+    /// Keywords (case-insensitive substring match against the note body).
+    pub any_of: Vec<String>,
+    /// Destination folder (vault-relative) to file matching notes into.
+    pub folder: String,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

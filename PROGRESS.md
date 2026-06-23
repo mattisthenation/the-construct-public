@@ -26,10 +26,10 @@ Ordered roughly by value toward Definition of Done.
 | 4 | Add `construct run <note>` subcommand | ✅ done |
 | 5 | Add `construct doctor` subcommand | ✅ done |
 | 6 | **`remind-me` handler — fully deterministic, zero model calls (thesis proof)** | ✅ done |
-| 7 | `file-this` deterministic-first (rules before any model) | 🟡 partial (routes to organize/model; needs deterministic rule tier) |
-| 8 | Internal module naming: Priori (judge) / Determa (execute) | ⬜ todo |
+| 7 | `file-this` deterministic-first (rules before any model) | ✅ done (keyword rules → folder, zero model; escalates on miss) |
+| 8 | Internal module naming: Priori (judge) / Determa (execute) | ✅ done (priori::judge seam; Determa = deterministic pipelines) |
 | 9 | Cloud providers: Anthropic + OpenAI-compatible (escalation tier) | ✅ done |
-| 10 | TUI: recent-notes pane, matrix-rain panel, logo placeholder | ⬜ todo (activity log + status exist) |
+| 10 | TUI: recent-notes pane, matrix-rain panel, logo placeholder | ✅ done |
 | 11 | `examples/sample-vault/` with demo notes for all 3 handlers | ✅ done |
 | 12 | Homebrew tap + formula, Apple Silicon + Intel builds | ✅ done (formula + release.yml; sha filled at first real release) |
 | 13 | GitHub Actions CI: fmt, clippy -D warnings, test, cargo audit, release build | ✅ done |

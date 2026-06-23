@@ -1,5 +1,6 @@
 pub mod brief;
 pub mod daily;
+pub mod file_this;
 pub mod inbox;
 pub mod journal_tag;
 pub mod organize;
@@ -13,6 +14,8 @@ pub mod tag;
 pub enum PipelineKind {
     /// Deterministic: parse "remind me to X" and record it. NEVER calls a model.
     RemindMe,
+    /// Deterministic-first: keyword-route to a folder; escalate to model on miss.
+    FileThis,
     Research,
     Summarize,
     Tag,
@@ -28,7 +31,8 @@ impl PipelineKind {
             // older internal names are kept as aliases so existing configs work.
             "remind-me" | "remind_me" => Some(PipelineKind::RemindMe),
             "research-this" | "research" => Some(PipelineKind::Research),
-            "file-this" | "organize" => Some(PipelineKind::Organize),
+            "file-this" => Some(PipelineKind::FileThis),
+            "organize" => Some(PipelineKind::Organize),
             "summarize" => Some(PipelineKind::Summarize),
             "tag" => Some(PipelineKind::Tag),
             "inbox" => Some(PipelineKind::Inbox),
