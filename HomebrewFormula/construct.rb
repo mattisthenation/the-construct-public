@@ -18,12 +18,12 @@ class Construct < Formula
   on_macos do
     on_arm do
       url "https://github.com/mattisthenation/the-construct-public/releases/download/v#{version}/construct-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_ARM"
+      sha256 "e9ec791c3023d1c026222144f31b8aaad0e6986b8fca990de91b298ef5ef95f6"
     end
 
     on_intel do
       url "https://github.com/mattisthenation/the-construct-public/releases/download/v#{version}/construct-v#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_INTEL"
+      sha256 "cfa813faca3a06c845426a15dc1d992deaa4e9f8e682ed0ab5260044ce405a70"
     end
   end
 
