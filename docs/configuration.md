@@ -200,20 +200,23 @@ rules = [
 | `any_of` | array of string | Keywords; a case-insensitive substring match against the note body. |
 | `folder` | string | Vault-relative destination folder for matching notes. |
 
-## Optional automations
+## Automations
 
-Each of these tables is **off unless present**. Uncomment to enable.
+### `[inbox]` — auto-process idle notes (ON by default)
 
-### `[inbox]` — auto-process idle notes
-
-Process top-level notes dropped in an inbox folder once they've been untouched
-for a while.
+The flagship feature, and the one table the starter config ships **enabled**.
+Drop any note into the inbox folder; once it's sat untouched for `idle_minutes`,
+The Construct enriches links, summarizes, tags, and files it (or recommends a
+folder for your review). `construct setup` also creates the inbox folder for you.
+To turn it off, delete this table.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `folder` | string | `"Inbox"` | Vault-relative inbox folder to watch. |
-| `idle_minutes` | integer | `30` | Process a note after it's been idle this long. Must be > 0. |
-| `agent` | string | — | Optional agent to use; defaults to a summarize/tag agent. Validated to exist if named. |
+| `idle_minutes` | integer | `30` | Process a note after it's been idle this long. Must be > 0. Lower it for faster pickup. |
+| `agent` | string | — | Agent to use; defaults to a summarize/tag agent. Validated to exist if named. Uses a local model, so start Ollama for the inbox to run. |
+
+> The remaining tables below are **off unless present** — add them to opt in.
 
 ### `[journal]` — daily journal location
 
