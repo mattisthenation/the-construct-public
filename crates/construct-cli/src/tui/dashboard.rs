@@ -1,24 +1,51 @@
-//! Live dashboard for `construct watch`: status header, activity feed,
-//! pending-review count. Pure consumer of the EngineEvent broadcast — engine
-//! pipelines never block on the UI.
+//! Live dashboard for `construct watch` — a terminal "ops console" with a hacker
+//! vibe (neon-green-on-black, digital rain) that still reads as a real status
+//! surface. Pure consumer of the EngineEvent broadcast — engine pipelines never
+//! block on the UI.
+//!
+//! Layout: a title bar, then a left column of two stacked panels (Activity over
+//! Recent Notes) beside a right column of four stacked boxes (logo, rain,
+//! commands, status). The daemon also runs headless; this is only a view.
 use crate::tui::rain::Rain;
 use construct_core::store::{RunRecord, Store};
 use construct_engine::events::{EngineEvent, EventKind};
 use construct_store::SqliteStore;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
+// --- Hacker palette: neon green + cyan on the terminal's own black. -----------
+const NEON: Color = Color::Rgb(0, 255, 150); // brightest — headlines, the head of a glyph
+const GREEN: Color = Color::Rgb(0, 200, 90); // primary text/accents
+const DIM: Color = Color::Rgb(0, 90, 60); // borders, labels, tails
+const CYAN: Color = Color::Rgb(90, 220, 220); // keys, secondary accents
+const AMBER: Color = Color::Rgb(255, 190, 70); // pending / paused / review
+const RED: Color = Color::Rgb(255, 80, 80); // errors
+const FG: Color = Color::Rgb(170, 225, 195); // body, greenish off-white
+
 /// ASCII/text logo for the dashboard. Intentionally tiny.
 // design-todo: replace with final ASCII logo (see docs/design-todo.md).
-const LOGO: &str = "  ╔═╗
-  ║C║  THE
-  ╚═╝  CONSTRUCT";
+const LOGO: &str = "╔═╗
+║C║  THE CONSTRUCT
+╚═╝  the folder is the prompt";
+
+/// A dim-green panel with a bracketed, cyan, uppercased title — the console motif.
+fn panel(title: &str, bright: bool) -> Block<'_> {
+    let border = if bright { GREEN } else { DIM };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        ))
+}
 
 /// Format a run as a single "Recent Notes" row: note basename + status.
 /// Pure → testable.
@@ -28,6 +55,17 @@ pub fn run_row(r: &RunRecord) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or(&r.note_path);
     format!("{:<8} {}", r.status.as_str(), name)
+}
+
+/// A small status glyph for a run outcome — purely cosmetic.
+fn status_glyph(status: &str) -> char {
+    match status {
+        "done" | "accepted" => '✓',
+        "review" => '◆',
+        "error" | "rejected" => '✗',
+        "running" | "researching" | "queued" => '▸',
+        _ => '·',
+    }
 }
 
 pub struct DashboardCtx {
@@ -41,6 +79,7 @@ pub struct DashboardCtx {
 struct State {
     activity: VecDeque<(EventKind, String, String)>, // kind, time, message
     recent: Vec<RunRecord>,                          // recently processed notes
+    processed: u64,                                  // lifetime events seen (for the footer pulse)
     pending_review: usize,
     started: Instant,
     paused: bool,
@@ -57,6 +96,7 @@ pub async fn run_dashboard(
     let mut state = State {
         activity: VecDeque::with_capacity(200),
         recent: Vec::new(),
+        processed: 0,
         pending_review: 0,
         started: Instant::now(),
         paused: false,
@@ -72,6 +112,7 @@ pub async fn run_dashboard(
                     if state.activity.len() >= 200 {
                         state.activity.pop_back();
                     }
+                    state.processed = state.processed.saturating_add(1);
                     state.activity.push_front((ev.kind, ev.time, ev.message));
                 }
                 Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
@@ -124,43 +165,58 @@ pub async fn run_dashboard(
 }
 
 fn draw(f: &mut Frame, ctx: &DashboardCtx, state: &mut State) {
-    // Vertical: title bar, top region (two panes), bottom row (four boxes), footer.
+    // Title bar on top; everything else is a left/right split below it.
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1), // title bar
-            Constraint::Min(5),    // top region (Activity | Recent Notes)
-            Constraint::Length(8), // bottom row (Logo | Rain | Commands | Status)
-            Constraint::Length(1), // footer keybindings
-        ])
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(f.area());
 
-    draw_title(f, ctx, rows[0]);
-    draw_top(f, rows[1], state);
-    draw_bottom(f, ctx, state, rows[2]);
+    draw_title(f, ctx, state, rows[0]);
 
-    let footer = Paragraph::new(" q quit  p pause  o open today's note")
-        .style(Style::default().fg(Color::DarkGray));
-    f.render_widget(footer, rows[3]);
-}
-
-fn draw_title(f: &mut Frame, ctx: &DashboardCtx, area: Rect) {
-    use crate::theme::Theme;
-    let title = Paragraph::new(format!(
-        " The Construct  ·  v{}  ·  vault: {}",
-        env!("CARGO_PKG_VERSION"),
-        ctx.vault_path,
-    ))
-    .style(Theme::header());
-    f.render_widget(title, area);
-}
-
-/// Top region: Activity (left) and Recent Notes (right), side by side.
-fn draw_top(f: &mut Frame, area: Rect, state: &State) {
-    use crate::theme::Theme;
-    let panes = Layout::default()
+    let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+        .split(rows[1]);
+
+    draw_left(f, cols[0], state); // two stacked panels: Activity + Recent Notes
+    draw_right(f, ctx, state, cols[1]); // four stacked boxes: logo, rain, keys, status
+}
+
+fn draw_title(f: &mut Frame, _ctx: &DashboardCtx, state: &State, area: Rect) {
+    let (dot, dot_color, word) = if state.paused {
+        ('⏸', AMBER, "paused")
+    } else {
+        ('●', NEON, "watching")
+    };
+    let up = state.started.elapsed().as_secs();
+    let line = Line::from(vec![
+        Span::styled(
+            " THE CONSTRUCT ",
+            Style::default().fg(NEON).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(DIM),
+        ),
+        Span::styled("  deterministic-first daemon  ", Style::default().fg(GREEN)),
+        Span::styled(format!("{dot} "), Style::default().fg(dot_color)),
+        Span::styled(
+            word,
+            Style::default().fg(dot_color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  ·  up {}h{:02}m", up / 3600, (up % 3600) / 60),
+            Style::default().fg(DIM),
+        ),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
+}
+
+/// Left column: Activity (top) over Recent Notes (bottom), stacked.
+fn draw_left(f: &mut Frame, area: Rect, state: &State) {
+    let stack = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
         .split(area);
 
     // --- Activity (live event log) ---
@@ -168,116 +224,147 @@ fn draw_top(f: &mut Frame, area: Rect, state: &State) {
         .activity
         .iter()
         .map(|(kind, time, msg)| {
-            let style = match kind {
-                EventKind::Error => Style::default().fg(Color::Red),
-                EventKind::Info => Style::default().fg(Color::DarkGray),
-                // The thesis, made visible: "handled without a model" glows green.
-                EventKind::Deterministic => Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-                _ => Theme::body(),
+            let (label_color, msg_color) = match kind {
+                EventKind::Error => (RED, RED),
+                EventKind::Info => (DIM, DIM),
+                // The thesis, made visible: "handled without a model" glows neon.
+                EventKind::Deterministic => (NEON, NEON),
+                _ => (CYAN, FG),
             };
-            ListItem::new(format!("{time}  {:<6} {msg}", kind.label())).style(style)
+            let bold = if *kind == EventKind::Deterministic {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{time} "), Style::default().fg(DIM)),
+                Span::styled(
+                    format!("{:<8}", format!("[{}]", kind.label())),
+                    Style::default().fg(label_color),
+                ),
+                Span::styled(
+                    format!(" {msg}"),
+                    Style::default().fg(msg_color).add_modifier(bold),
+                ),
+            ]))
         })
         .collect();
-    let feed = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Activity ")
-            .border_style(Theme::accent()),
-    );
-    f.render_widget(feed, panes[0]);
+    f.render_widget(List::new(items).block(panel("ACTIVITY", true)), stack[0]);
 
     // --- Recent Notes (note basename + outcome/status) ---
     let recent: Vec<ListItem> = state
         .recent
         .iter()
         .map(|r| {
-            let style = match r.status.as_str() {
-                "error" => Style::default().fg(Color::Red),
-                "review" => Style::default().fg(Color::Yellow),
-                "done" | "accepted" => Style::default().fg(Color::Green),
-                _ => Theme::body(),
+            let s = r.status.as_str();
+            let color = match s {
+                "error" | "rejected" => RED,
+                "review" => AMBER,
+                "done" | "accepted" => GREEN,
+                _ => FG,
             };
-            ListItem::new(run_row(r)).style(style)
+            ListItem::new(Line::from(vec![
+                Span::styled(format!(" {} ", status_glyph(s)), Style::default().fg(color)),
+                Span::styled(run_row(r), Style::default().fg(color)),
+            ]))
         })
         .collect();
-    let recent_list = List::new(recent).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Recent Notes ")
-            .border_style(Theme::accent()),
+    f.render_widget(
+        List::new(recent).block(panel("RECENT NOTES", false)),
+        stack[1],
     );
-    f.render_widget(recent_list, panes[1]);
 }
 
-/// Bottom row: Logo, Digital Rain, Commands, Status — four boxes side by side.
-fn draw_bottom(f: &mut Frame, ctx: &DashboardCtx, state: &mut State, area: Rect) {
-    use crate::theme::Theme;
+/// Right column: Logo, Digital Rain, Commands, Status — four boxes stacked.
+fn draw_right(f: &mut Frame, ctx: &DashboardCtx, state: &mut State, area: Rect) {
     let boxes = Layout::default()
-        .direction(Direction::Horizontal)
+        .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(22), // logo
-            Constraint::Percentage(28), // rain
-            Constraint::Percentage(22), // commands
-            Constraint::Percentage(28), // status
+            Constraint::Length(5), // logo
+            Constraint::Min(4),    // rain (flexes to fill)
+            Constraint::Length(5), // commands
+            Constraint::Length(9), // status (fits dot + up/queue/events/vault + daily/briefs)
         ])
         .split(area);
 
     // --- Logo ---
-    let logo = Paragraph::new(LOGO).style(Theme::accent()).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" The Construct ")
-            .border_style(Theme::accent()),
-    );
+    let logo = Paragraph::new(LOGO)
+        .style(Style::default().fg(NEON).add_modifier(Modifier::BOLD))
+        .block(panel("◈", false));
     f.render_widget(logo, boxes[0]);
 
     // --- Digital rain ---
     draw_rain(f, boxes[1], &mut state.rain);
 
     // --- Commands ---
-    let commands = Paragraph::new(" q  quit\n p  pause\n o  open today's note")
-        .style(Theme::body())
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Commands ")
-                .border_style(Theme::accent()),
-        );
+    let key = |k: &str, label: &str| {
+        Line::from(vec![
+            Span::styled(format!(" {k} "), Style::default().fg(Color::Black).bg(CYAN)),
+            Span::styled(format!("  {label}"), Style::default().fg(FG)),
+        ])
+    };
+    let commands = Paragraph::new(vec![
+        key("q", "quit"),
+        key("p", "pause / resume"),
+        key("o", "open today's note"),
+    ])
+    .block(panel("KEYS", false));
     f.render_widget(commands, boxes[2]);
 
     // --- Status ---
-    let up = state.started.elapsed().as_secs();
-    let watching = if state.paused {
-        "|| paused"
+    f.render_widget(status_widget(ctx, state), boxes[3]);
+}
+
+fn status_widget<'a>(ctx: &'a DashboardCtx, state: &State) -> Paragraph<'a> {
+    let (dot, dot_color, word) = if state.paused {
+        ('⏸', AMBER, "paused")
     } else {
-        "* watching"
+        ('●', NEON, "watching")
     };
-    let daily = ctx
-        .daily_time
-        .as_deref()
-        .map(|t| format!("\n daily   {t}"))
-        .unwrap_or_default();
-    let briefs = ctx
-        .briefs_folder
-        .as_deref()
-        .map(|b| format!("\n briefs  {b}/"))
-        .unwrap_or_default();
-    let status = Paragraph::new(format!(
-        " {watching}\n up      {}h {:02}m\n pending {} review{daily}{briefs}",
-        up / 3600,
-        (up % 3600) / 60,
-        state.pending_review,
-    ))
-    .style(Theme::body())
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Status ")
-            .border_style(Theme::accent()),
-    );
-    f.render_widget(status, boxes[3]);
+    let up = state.started.elapsed().as_secs();
+    let pending_color = if state.pending_review > 0 { AMBER } else { DIM };
+
+    let row = |label: &'static str, value: String, color: Color| {
+        Line::from(vec![
+            Span::styled(format!(" {label:<8}"), Style::default().fg(DIM)),
+            Span::styled(value, Style::default().fg(color)),
+        ])
+    };
+
+    let vault = std::path::Path::new(&ctx.vault_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&ctx.vault_path)
+        .to_string();
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(format!(" {dot} "), Style::default().fg(dot_color)),
+            Span::styled(
+                word,
+                Style::default().fg(dot_color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        row(
+            "uptime",
+            format!("{}h {:02}m", up / 3600, (up % 3600) / 60),
+            FG,
+        ),
+        row(
+            "queue",
+            format!("{} review", state.pending_review),
+            pending_color,
+        ),
+        row("events", format!("{} processed", state.processed), FG),
+        row("vault", vault, FG),
+    ];
+    if let Some(t) = &ctx.daily_time {
+        lines.push(row("daily", t.clone(), FG));
+    }
+    if let Some(b) = &ctx.briefs_folder {
+        lines.push(row("briefs", format!("{b}/"), FG));
+    }
+    Paragraph::new(lines).block(panel("STATUS", true))
 }
 
 /// Render the digital-rain panel. CPU-safe: we advance the animation exactly
@@ -285,10 +372,7 @@ fn draw_bottom(f: &mut Frame, ctx: &DashboardCtx, state: &mut State, area: Rect)
 /// event poll), and `Rain::step`/`Rain::cell` are O(area) integer math with no
 /// threads, timers, or per-cell syscalls.
 fn draw_rain(f: &mut Frame, area: Rect, rain: &mut Rain) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Rain ")
-        .border_style(Style::default().fg(Color::Green));
+    let block = panel("RAIN", false);
     let inner = block.inner(area);
     f.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -304,9 +388,9 @@ fn draw_rain(f: &mut Frame, area: Rect, rain: &mut Rain) {
             match rain.cell(col, row) {
                 Some((g, tier)) => {
                     let color = match tier {
-                        0 => Color::Rgb(180, 255, 180), // head: bright
-                        1 => Color::Green,
-                        _ => Color::Rgb(0, 90, 0), // tail: dim
+                        0 => NEON,  // head: brightest
+                        1 => GREEN, // body
+                        _ => DIM,   // tail: dim
                     };
                     spans.push(Span::styled(g.to_string(), Style::default().fg(color)));
                 }
@@ -337,5 +421,14 @@ mod tests {
         assert!(row.contains("review"));
         assert!(row.contains("My Topic.md"));
         assert!(!row.contains("/vault/"));
+    }
+
+    #[test]
+    fn status_glyphs_cover_outcomes() {
+        assert_eq!(status_glyph("done"), '✓');
+        assert_eq!(status_glyph("review"), '◆');
+        assert_eq!(status_glyph("error"), '✗');
+        assert_eq!(status_glyph("queued"), '▸');
+        assert_eq!(status_glyph("mystery"), '·');
     }
 }
