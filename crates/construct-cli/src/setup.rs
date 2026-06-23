@@ -191,8 +191,119 @@ pub async fn run_setup(config_path: &Path, home: &Path, args: SetupArgs) -> anyh
         println!("  keys:   {} (mode 600)", env_path.display());
     }
 
-    println!("\nSetup complete. Next:\n  construct config-check\n  construct watch");
+    // --- Seed the vault: create the Inbox folder + drop a readme guide ---
+    if let Some(cfg) = &existing_cfg {
+        if let Err(e) = seed_vault(cfg) {
+            // Non-fatal: a bad vault path shouldn't abort an otherwise-good setup.
+            eprintln!("  \u{26a0} could not seed vault: {e}");
+        }
+    }
+
+    println!(
+        "\nSetup complete. Next:\n  construct config-check\n  construct watch\n\nOpen \"the-construct-readme.md\" in your vault for a quick tour."
+    );
     Ok(())
+}
+
+/// Ensure the Inbox folder exists and drop a `the-construct-readme.md` guide into
+/// the vault root. Best-effort and non-destructive: the readme is written only if
+/// absent (a user's edits are never clobbered). The vault is sacred.
+fn seed_vault(cfg: &construct_config::Config) -> anyhow::Result<()> {
+    let vault = PathBuf::from(shellexpand(&cfg.vault.path));
+    if !vault.is_dir() {
+        anyhow::bail!("vault path {} is not a directory", vault.display());
+    }
+    // Inbox is on by default — make sure the folder exists so drop-in works now.
+    if let Some(inbox) = &cfg.inbox {
+        std::fs::create_dir_all(vault.join(&inbox.folder))?;
+        println!("  inbox:  {}/ (ready)", inbox.folder);
+    }
+    let readme = vault.join("the-construct-readme.md");
+    if readme.exists() {
+        println!("  readme: the-construct-readme.md (exists — left untouched)");
+    } else {
+        std::fs::write(&readme, readme_markdown(cfg))?;
+        println!("  readme: the-construct-readme.md (created)");
+    }
+    Ok(())
+}
+
+/// The in-vault user guide. IMPORTANT: every example trigger tag is wrapped in
+/// `inline code` so it is NOT a bare whitespace-delimited `#tag` token — otherwise
+/// the watcher would treat this readme as a note to process. (The watcher detects
+/// tags via `Note::tags()`, which only matches tokens that *start* with `#`.)
+fn readme_markdown(cfg: &construct_config::Config) -> String {
+    let tag_for = |p: &str| {
+        cfg.rules
+            .iter()
+            .find(|r| r.pipeline == p)
+            .map(|r| r.match_tag.clone())
+    };
+    let remind = tag_for("remind-me").unwrap_or_else(|| "theconstruct/remind-me".into());
+    let file = tag_for("file-this").unwrap_or_else(|| "theconstruct/file-this".into());
+    let research = tag_for("research-this").unwrap_or_else(|| "theconstruct/research-this".into());
+    let inbox_folder = cfg
+        .inbox
+        .as_ref()
+        .map(|i| i.folder.clone())
+        .unwrap_or_else(|| "Inbox".into());
+    let idle = cfg.inbox.as_ref().map(|i| i.idle_minutes).unwrap_or(30);
+
+    format!(
+        r#"# The Construct — how to use this vault
+
+The Construct is running beside this vault as a quiet companion. **The folder is
+the prompt:** you drop a markdown note, it reads it, does the work, and writes the
+result back — handling most things with plain code and only reaching for a model
+when it truly needs to.
+
+> You can delete this note anytime — it's just a guide. The Construct won't
+> re-create it unless you run `construct setup` again.
+
+## The Inbox (the easy way)
+
+Drop any note into the **`{inbox_folder}/`** folder. After it's sat untouched for
+about {idle} minutes, The Construct enriches any links, summarizes it, tags it, and
+either files it into a fitting folder or suggests one for your review. Want faster
+pickup? Lower `idle_minutes` in your config.
+
+## Tag a note (the explicit way)
+
+Add one of these tags anywhere in a note's body and The Construct handles it:
+
+| Put this tag in a note | What happens |
+| --- | --- |
+| `#{remind}` | **Reminder.** Parses "remind me to X by/at/on …" and records it. **No model — instant, works offline.** |
+| `#{file}` | **File it.** Routes the note to a folder (keyword rules first; a local model only if needed). Proposed for your review. |
+| `#{research}` | **Research it.** Uses a local model (+ web search if configured) to write a sourced report back into the note. |
+
+### Try it now
+
+Create a note that says **"Remind me to call the dentist tomorrow at 5pm"** and
+tag it with `#{remind}` (type the tag yourself — it's shown in code here so this
+guide doesn't get processed as a reminder). Within a moment The Construct rewrites
+the note with a tidy reminder block and a due date — and tells you it did it
+*without calling a model*.
+
+## Watching it work
+
+- `construct watch` opens a live dashboard (Activity, Recent Notes, status).
+  Deterministic, no-model handling shows in bright green — that's the whole idea.
+- `construct status` prints run counts and anything awaiting your review.
+- `construct doctor` checks your setup (config, vault, whether Ollama is reachable).
+
+## Good to know
+
+- **`#{remind}` needs nothing else.** `#{file}` and `#{research}` use a local model
+  via [Ollama](https://ollama.com) — start it (`ollama serve`) for those to run.
+- The Construct only ever proposes folder moves for your review; it won't shuffle
+  your vault behind your back.
+- Settings live in your config file (`construct config-check` shows the path). The
+  Inbox folder, the idle delay, the tags, and the models are all yours to change.
+
+Happy building.
+"#
+    )
 }
 
 fn prompt_vault_path() -> anyhow::Result<String> {
@@ -259,6 +370,22 @@ mod tests {
         assert!(keys.iter().any(|k| k.env == "TAVILY_API_KEY"));
         // No config yet → still suggests the known key set.
         assert!(key_specs(None).iter().any(|k| k.env == "TAVILY_API_KEY"));
+    }
+
+    #[test]
+    fn readme_has_no_live_trigger_tags() {
+        // The readme must never contain a bare `#tag` token, or the watcher would
+        // try to process the readme itself. Parse it the way the watcher does.
+        let cfg: construct_config::Config = toml::from_str(crate::commands::SAMPLE_CONFIG).unwrap();
+        let md = readme_markdown(&cfg);
+        let note = construct_obsidian::frontmatter::Note::parse(&md);
+        assert!(
+            note.tags().is_empty(),
+            "readme leaked live trigger tags: {:?}",
+            note.tags()
+        );
+        // Sanity: it does still mention the tags (inside backticks).
+        assert!(md.contains("remind-me"));
     }
 
     #[tokio::test]

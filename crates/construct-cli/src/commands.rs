@@ -169,13 +169,18 @@ rules = [
     { any_of = ["invoice", "receipt", "budget"], folder = "Finance" },
 ]
 
-# --- Automations (Slice 3) — all OFF unless their table is present. Uncomment to enable. ---
+# --- Inbox: ON by default ---
+# Drop any note into the Inbox folder; once it's sat untouched for `idle_minutes`,
+# The Construct enriches links, summarizes, tags, and files it (or recommends a
+# folder for your review). Set `idle_minutes` lower for faster pickup. This uses a
+# local model — point `agent` at a running Ollama (see above). To turn it off,
+# delete this table.
+[inbox]
+folder = "Inbox"
+idle_minutes = 30
+agent = "Librarian"
 
-# Auto-process top-level notes dropped in the Inbox folder once they've been idle.
-# [inbox]
-# folder = "Inbox"
-# idle_minutes = 30        # process a note after it's been untouched this long
-# agent = "Librarian"      # optional; defaults to a summarize/tag agent
+# --- Other automations — OFF unless their table is present. Uncomment to enable. ---
 
 # Where the daily-summary journal notes are written (journal/YYYY/MM/DD.md).
 # [journal]
@@ -387,6 +392,10 @@ mod tests {
         assert!(pipelines.contains(&"remind-me"));
         assert!(pipelines.contains(&"file-this"));
         assert!(pipelines.contains(&"research-this"));
+        // Inbox is on by default in the starter config.
+        let inbox = cfg.inbox.expect("inbox should be enabled by default");
+        assert_eq!(inbox.folder, "Inbox");
+        assert_eq!(inbox.agent.as_deref(), Some("Librarian"));
         assert_eq!(cfg.actions.tag.max_tags, 8);
         assert_eq!(
             cfg.actions.organize.exclude_dirs,
