@@ -117,6 +117,21 @@ base_url = "http://localhost:11434"
 tools = []
 system_prompt_file = "prompts/librarian.md"
 
+# Optional cloud escalation agent. Local Ollama is the default and needs no key;
+# point an agent at a cloud provider only if you want it. `api_key_env` is the
+# NAME of an env var holding the key — the key is never stored in this file.
+#   provider = "anthropic"  (base_url defaults to https://api.anthropic.com)
+#   provider = "openai"     (any OpenAI-compatible endpoint; set base_url to use
+#                            Groq/Together/OpenRouter/vLLM/etc.)
+# [[agents]]
+# name = "CloudScout"
+# domain = "research"
+# provider = "anthropic"
+# model = "claude-sonnet-4-6"
+# base_url = "https://api.anthropic.com"
+# api_key_env = "ANTHROPIC_API_KEY"
+# tools = ["web_search", "web_fetch"]
+
 # --- The three handlers ---
 
 # remind-me: FULLY DETERMINISTIC. Parses "remind me to X [when]" and records it.

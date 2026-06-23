@@ -15,6 +15,7 @@ construct-engine = { path = "../construct-engine" }
 construct-obsidian = { path = "../construct-obsidian" }
 construct-tools = { path = "../construct-tools" }
 construct-model-ollama = { path = "../construct-model-ollama" }
+construct-model-cloud = { path = "../construct-model-cloud" }
 ratatui.workspace = true
 crossterm.workspace = true
 clap.workspace = true

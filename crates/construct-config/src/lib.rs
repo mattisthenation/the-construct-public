@@ -46,6 +46,11 @@ pub struct Agent {
     pub tools: Vec<String>,
     #[serde(default)]
     pub system_prompt_file: Option<String>,
+    /// Name of the env var holding this provider's API key (cloud providers only;
+    /// Ollama needs none). The key itself is NEVER stored in config — only the
+    /// variable name, resolved from the environment at runtime.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

@@ -297,6 +297,7 @@ dependencies = [
  "construct-config",
  "construct-core",
  "construct-engine",
+ "construct-model-cloud",
  "construct-model-ollama",
  "construct-obsidian",
  "construct-store",
@@ -356,6 +357,19 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+]
+
+[[package]]
+name = "construct-model-cloud"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "construct-core",
+ "construct-model-ollama",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

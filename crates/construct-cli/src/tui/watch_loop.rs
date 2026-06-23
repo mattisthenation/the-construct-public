@@ -50,6 +50,47 @@ fn load_system_prompt(base_dir: &Path, agent: &Agent, fallback: &str) -> String 
     }
 }
 
+/// Build the model provider for an agent based on its `provider` field. Ollama is
+/// the default (no key); cloud providers resolve their API key from the env var
+/// named in `api_key_env`. An unknown provider falls back to Ollama with a warning.
+/// Base URL falls back to the provider's public default when the config leaves it blank.
+pub fn provider_for(agent: &Agent) -> Arc<dyn ModelProvider> {
+    use construct_model_cloud::{
+        AnthropicProvider, OpenAiProvider, ANTHROPIC_DEFAULT_BASE, OPENAI_DEFAULT_BASE,
+    };
+    let key = || {
+        agent
+            .api_key_env
+            .as_deref()
+            .and_then(|name| std::env::var(name).ok())
+            .unwrap_or_default()
+    };
+    let base_or = |default: &str| {
+        if agent.base_url.trim().is_empty() {
+            default.to_string()
+        } else {
+            agent.base_url.clone()
+        }
+    };
+    match agent.provider.to_lowercase().as_str() {
+        "anthropic" => Arc::new(AnthropicProvider::new(
+            base_or(ANTHROPIC_DEFAULT_BASE),
+            key(),
+        )),
+        "openai" | "openai-compatible" | "openai_compat" => {
+            Arc::new(OpenAiProvider::new(base_or(OPENAI_DEFAULT_BASE), key()))
+        }
+        "ollama" => Arc::new(OllamaProvider::new(agent.base_url.clone())),
+        other => {
+            tracing::warn!(
+                "unknown provider '{other}' for agent '{}'; using ollama",
+                agent.name
+            );
+            Arc::new(OllamaProvider::new(agent.base_url.clone()))
+        }
+    }
+}
+
 /// Build one orchestrator for an (agent, pipeline) pair. Shared by the watch loop
 /// and the one-shot `construct run` path so both wire tools/provider identically.
 pub fn build_orchestrator(
@@ -60,7 +101,7 @@ pub fn build_orchestrator(
     rule_name: &str,
     kind: PipelineKind,
 ) -> Arc<Orchestrator> {
-    let provider: Arc<dyn ModelProvider> = Arc::new(OllamaProvider::new(agent.base_url.clone()));
+    let provider: Arc<dyn ModelProvider> = provider_for(agent);
     let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
     if agent.tools.iter().any(|t| t == "web_search") {
         if let Some(ws) = &cfg.tools.web_search {
@@ -247,8 +288,7 @@ pub async fn run_watch(
                 None
             }
             Some(agent) => {
-                let provider: Arc<dyn ModelProvider> =
-                    Arc::new(OllamaProvider::new(agent.base_url.clone()));
+                let provider: Arc<dyn ModelProvider> = provider_for(agent);
                 // Inbox always needs web_fetch for URL enrichment.
                 let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
                 tools.insert("web_fetch".into(), Arc::new(WebFetch::new()));
@@ -302,8 +342,7 @@ pub async fn run_watch(
                 None
             }
             Some(agent) => {
-                let provider: Arc<dyn ModelProvider> =
-                    Arc::new(OllamaProvider::new(agent.base_url.clone()));
+                let provider: Arc<dyn ModelProvider> = provider_for(agent);
                 let fallback = format!("You are {}, writing a concise daily journal recap. Always answer with strict JSON.", agent.name);
                 let system_prompt = load_system_prompt(&base_dir, agent, &fallback);
                 Some(Arc::new(Orchestrator {

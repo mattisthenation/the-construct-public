@@ -1,0 +1,16 @@
+[package]
+name = "construct-model-cloud"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+construct-core = { path = "../construct-core" }
+construct-model-ollama = { path = "../construct-model-ollama" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
