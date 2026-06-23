@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod dashboard;
+pub mod rain;
 pub mod watch_loop;
 
 use crate::theme::Theme;
