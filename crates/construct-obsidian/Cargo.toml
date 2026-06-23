@@ -1,0 +1,18 @@
+[package]
+name = "construct-obsidian"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+construct-core = { path = "../construct-core" }
+serde.workspace = true
+serde_yaml.workspace = true
+notify.workspace = true
+notify-debouncer-full.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

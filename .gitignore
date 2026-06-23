@@ -1,0 +1,12 @@
+# Rust build output
+/target
+# Packaged distribution artifacts (built by scripts/release.sh, not source)
+/dist
+# Local databases / state
+*.db
+*.db-journal
+*.db-wal
+# Secrets
+.env
+# macOS
+.DS_Store

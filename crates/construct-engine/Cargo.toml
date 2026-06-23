@@ -1,0 +1,25 @@
+[package]
+name = "construct-engine"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+construct-core = { path = "../construct-core" }
+construct-config = { path = "../construct-config" }
+construct-obsidian = { path = "../construct-obsidian" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+toml.workspace = true
+construct-store = { path = "../construct-store" }
+tokio.workspace = true
+filetime = "0.2.29"
