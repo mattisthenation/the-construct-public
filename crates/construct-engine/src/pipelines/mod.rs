@@ -24,12 +24,13 @@ pub enum PipelineKind {
 impl PipelineKind {
     pub fn from_name(name: &str) -> Option<PipelineKind> {
         match name {
-            // accept both the kebab-case handler name and a toml-friendly alias
+            // The three spec handler names are the canonical user-facing ones;
+            // older internal names are kept as aliases so existing configs work.
             "remind-me" | "remind_me" => Some(PipelineKind::RemindMe),
-            "research" => Some(PipelineKind::Research),
+            "research-this" | "research" => Some(PipelineKind::Research),
+            "file-this" | "organize" => Some(PipelineKind::Organize),
             "summarize" => Some(PipelineKind::Summarize),
             "tag" => Some(PipelineKind::Tag),
-            "organize" => Some(PipelineKind::Organize),
             "inbox" => Some(PipelineKind::Inbox),
             "daily_summary" => Some(PipelineKind::DailySummary),
             _ => None,

@@ -142,8 +142,18 @@ fn default_briefs_folder() -> String {
     "AI/DailyBriefs".to_string()
 }
 
-/// The set of built-in pipeline names this binary knows how to run.
-pub const KNOWN_PIPELINES: &[&str] = &["research", "summarize", "tag", "organize"];
+/// The set of built-in pipeline names this binary knows how to run. The three
+/// spec handler names (`remind-me`, `file-this`, `research-this`) are canonical;
+/// the older internal names remain as accepted aliases.
+pub const KNOWN_PIPELINES: &[&str] = &[
+    "remind-me",
+    "file-this",
+    "research-this",
+    "research",
+    "summarize",
+    "tag",
+    "organize",
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {

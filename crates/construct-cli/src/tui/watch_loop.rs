@@ -50,6 +50,103 @@ fn load_system_prompt(base_dir: &Path, agent: &Agent, fallback: &str) -> String 
     }
 }
 
+/// Build one orchestrator for an (agent, pipeline) pair. Shared by the watch loop
+/// and the one-shot `construct run` path so both wire tools/provider identically.
+pub fn build_orchestrator(
+    cfg: &Config,
+    base_dir: &Path,
+    store: &Arc<dyn Store>,
+    agent: &Agent,
+    rule_name: &str,
+    kind: PipelineKind,
+) -> Arc<Orchestrator> {
+    let provider: Arc<dyn ModelProvider> = Arc::new(OllamaProvider::new(agent.base_url.clone()));
+    let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
+    if agent.tools.iter().any(|t| t == "web_search") {
+        if let Some(ws) = &cfg.tools.web_search {
+            let key = std::env::var(&ws.api_key_env).unwrap_or_default();
+            tools.insert("web_search".into(), Arc::new(WebSearch::tavily(key)));
+        }
+    }
+    if agent.tools.iter().any(|t| t == "web_fetch") {
+        tools.insert("web_fetch".into(), Arc::new(WebFetch::new()));
+    }
+    let fallback = format!("You are {}, a meticulous web research agent. Always answer with strict JSON: {{summary, findings[], sources[{{title,url}}]}}.", agent.name);
+    let system_prompt = load_system_prompt(base_dir, agent, &fallback);
+    Arc::new(Orchestrator {
+        store: store.clone(),
+        provider,
+        tools,
+        model: agent.model.clone(),
+        agent: agent.name.clone(),
+        rule: rule_name.to_string(),
+        pipeline: kind,
+        system_prompt,
+        max_iterations: 8,
+        done_tag: Some("theconstruct/done".into()),
+        vault_path: shellexpand_tilde(&cfg.vault.path).into(),
+        max_tags: cfg.actions.tag.max_tags,
+        exclude_dirs: cfg.actions.organize.exclude_dirs.clone(),
+        prompt_dir: Some(base_dir.join("prompts")),
+        briefs_folder: cfg.briefs.as_ref().map(|b| b.folder.clone()),
+    })
+}
+
+/// One-shot processing for `construct run <note>`: find the rule whose trigger tag
+/// the note carries, build that orchestrator, and process the note once. Reports
+/// the resulting run status. Useful for scripting and for demoing a single handler.
+pub async fn run_once(cfg: Config, base_dir: PathBuf, note: PathBuf) -> anyhow::Result<()> {
+    let abs = std::fs::canonicalize(&note)
+        .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", note.display()))?;
+    let text = std::fs::read_to_string(&abs)?;
+    let parsed = construct_obsidian::frontmatter::Note::parse(&text);
+    let tags = parsed.tags();
+    let rule = cfg
+        .rules
+        .iter()
+        .find(|r| tags.iter().any(|t| t == &r.match_tag))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "note has no inline tag matching a configured rule. note tags: {:?}; configured: {:?}",
+                tags,
+                cfg.rules.iter().map(|r| &r.match_tag).collect::<Vec<_>>()
+            )
+        })?;
+    let agent = cfg
+        .agent(&rule.agent)
+        .ok_or_else(|| anyhow::anyhow!("rule references unknown agent '{}'", rule.agent))?
+        .clone();
+    let kind = PipelineKind::from_name(&rule.pipeline)
+        .ok_or_else(|| anyhow::anyhow!("unknown pipeline '{}'", rule.pipeline))?;
+
+    let db_url = resolve_db_url(&base_dir);
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::connect(&db_url).await?);
+    let o = build_orchestrator(&cfg, &base_dir, &store, &agent, &rule.pipeline, kind);
+
+    println!(
+        "Processing {} via #{} → {} pipeline",
+        abs.display(),
+        rule.match_tag,
+        rule.pipeline
+    );
+    if kind.is_deterministic() {
+        println!("  deterministic handler — no model will be called.");
+    }
+    o.handle(VaultEvent::NoteTagged {
+        path: abs.clone(),
+        tag: rule.match_tag.clone(),
+    })
+    .await?;
+
+    if let Some(run) = store.run_for_note(&abs.to_string_lossy()).await? {
+        println!("  → status: {}", run.status.as_str());
+        if let Some(err) = run.error {
+            println!("  error: {err}");
+        }
+    }
+    Ok(())
+}
+
 /// How a trigger event should be routed to orchestrators.
 #[derive(Debug, PartialEq)]
 enum RouteTarget {
@@ -123,43 +220,10 @@ pub async fn run_watch(
             .agent(&rule.agent)
             .ok_or_else(|| anyhow::anyhow!("rule references unknown agent"))?
             .clone();
-        let provider: Arc<dyn ModelProvider> =
-            Arc::new(OllamaProvider::new(agent.base_url.clone()));
-
-        let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
-        if agent.tools.iter().any(|t| t == "web_search") {
-            if let Some(ws) = &cfg.tools.web_search {
-                let key = std::env::var(&ws.api_key_env).unwrap_or_default();
-                tools.insert("web_search".into(), Arc::new(WebSearch::tavily(key)));
-            }
-        }
-        if agent.tools.iter().any(|t| t == "web_fetch") {
-            tools.insert("web_fetch".into(), Arc::new(WebFetch::new()));
-        }
-
-        let fallback = format!("You are {}, a meticulous web research agent. Always answer with strict JSON: {{summary, findings[], sources[{{title,url}}]}}.", agent.name);
-        let system_prompt = load_system_prompt(&base_dir, &agent, &fallback);
-
         let kind = PipelineKind::from_name(&rule.pipeline)
             .ok_or_else(|| anyhow::anyhow!("unknown pipeline {}", rule.pipeline))?;
-
-        let orchestrator = Arc::new(Orchestrator {
-            store: store.clone(),
-            provider,
-            tools,
-            model: agent.model.clone(),
-            agent: agent.name.clone(),
-            rule: rule.pipeline.clone(),
-            pipeline: kind,
-            system_prompt,
-            max_iterations: 8,
-            done_tag: Some("theconstruct/done".into()),
-            vault_path: shellexpand_tilde(&cfg.vault.path).into(),
-            max_tags: cfg.actions.tag.max_tags,
-            exclude_dirs: cfg.actions.organize.exclude_dirs.clone(),
-            prompt_dir: Some(base_dir.join("prompts")),
-            briefs_folder: cfg.briefs.as_ref().map(|b| b.folder.clone()),
-        });
+        let orchestrator =
+            build_orchestrator(&cfg, &base_dir, &store, &agent, &rule.pipeline, kind);
         orchestrators.insert(rule.match_tag.clone(), orchestrator);
     }
 

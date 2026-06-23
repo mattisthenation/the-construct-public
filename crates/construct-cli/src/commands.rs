@@ -7,6 +7,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "construct",
+    version,
     about = "The Construct — local-first agent runtime"
 )]
 struct Cli {
@@ -63,6 +64,13 @@ enum Command {
     Init,
     /// Validate the config file.
     ConfigCheck,
+    /// Check the environment: config valid, vault writable, provider reachable.
+    Doctor,
+    /// Process a single note once, then exit (for testing/scripting).
+    Run {
+        /// Path to the markdown note to process.
+        note: PathBuf,
+    },
     /// Run the vault watcher.
     Watch {
         /// Plain log output (no dashboard) — for launchd/background use.
@@ -82,7 +90,7 @@ name = "The Construct"
 path = "~/ObsidianVault"
 managed_folder = "Construct"
 
-# Web search backend (only needed for the `research` pipeline).
+# Web search backend (only needed for the `research-this` handler).
 # IMPORTANT: api_key_env is the NAME of an environment variable, NOT the key itself.
 # Set the key in your shell:  export TAVILY_API_KEY=tvly-xxxxxxxx
 [tools.web_search]
@@ -109,25 +117,27 @@ base_url = "http://localhost:11434"
 tools = []
 system_prompt_file = "prompts/librarian.md"
 
+# --- The three handlers ---
+
+# remind-me: FULLY DETERMINISTIC. Parses "remind me to X [when]" and records it.
+# No model is ever called — this handler proves the deterministic-first thesis.
+# (It still names an agent for uniformity, but never contacts it.)
 [[rules]]
-match_tag = "theconstruct/research"
+match_tag = "theconstruct/remind-me"
+agent = "Librarian"
+pipeline = "remind-me"
+
+# file-this: classify and propose a destination folder (routing, reviewed by you).
+[[rules]]
+match_tag = "theconstruct/file-this"
+agent = "Librarian"
+pipeline = "file-this"
+
+# research-this: escalate to a model (+ web search) and write a report back.
+[[rules]]
+match_tag = "theconstruct/research-this"
 agent = "Scout"
-pipeline = "research"
-
-[[rules]]
-match_tag = "theconstruct/summarize"
-agent = "Librarian"
-pipeline = "summarize"
-
-[[rules]]
-match_tag = "theconstruct/tag"
-agent = "Librarian"
-pipeline = "tag"
-
-[[rules]]
-match_tag = "theconstruct/organize"
-agent = "Librarian"
-pipeline = "organize"
+pipeline = "research-this"
 
 [actions.tag]
 max_tags = 8
@@ -235,6 +245,16 @@ pub async fn run() -> anyhow::Result<()> {
                 );
             }
         }
+        Some(Command::Doctor) => {
+            let ok = crate::doctor::run(&config).await?;
+            if !ok {
+                std::process::exit(1);
+            }
+        }
+        Some(Command::Run { note }) => {
+            let cfg = Config::load(&config)?;
+            crate::tui::watch_loop::run_once(cfg, base_dir, note).await?;
+        }
         Some(Command::Watch { headless }) => {
             use std::io::IsTerminal;
             let cfg = Config::load(&config)?;
@@ -335,9 +355,14 @@ mod tests {
         let cfg: Config = toml::from_str(SAMPLE_CONFIG).unwrap();
         cfg.validate().unwrap();
         assert_eq!(cfg.agents.len(), 2);
-        assert_eq!(cfg.rules.len(), 4);
+        assert_eq!(cfg.rules.len(), 3);
         assert_eq!(cfg.agents[0].name, "Scout");
         assert_eq!(cfg.agents[1].name, "Librarian");
+        // The three spec handlers are all present and route to known pipelines.
+        let pipelines: Vec<&str> = cfg.rules.iter().map(|r| r.pipeline.as_str()).collect();
+        assert!(pipelines.contains(&"remind-me"));
+        assert!(pipelines.contains(&"file-this"));
+        assert!(pipelines.contains(&"research-this"));
         assert_eq!(cfg.actions.tag.max_tags, 8);
         assert_eq!(
             cfg.actions.organize.exclude_dirs,

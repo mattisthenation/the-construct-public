@@ -1,4 +1,5 @@
 mod commands;
+mod doctor;
 mod setup;
 mod theme;
 mod tui;
