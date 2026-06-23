@@ -9,6 +9,19 @@ pub struct SqliteStore {
     pool: SqlitePool,
 }
 
+/// Schema, embedded at compile time. Every statement is `IF NOT EXISTS`, so running
+/// the whole script on each connect is idempotent — no version table needed. This
+/// is why the crate doesn't pull sqlx's `macros`/`migrate` features (and their
+/// transitive mysql/postgres drivers): the schema is small and append-only.
+const SCHEMA: &str = concat!(
+    include_str!("../migrations/0001_init.sql"),
+    "\n",
+    include_str!("../migrations/0002_schedule_state.sql"),
+    "\n",
+    include_str!("../migrations/0003_brief_state.sql"),
+    "\n",
+);
+
 fn map_status(s: &str) -> RunStatus {
     match s {
         "queued" => RunStatus::Queued,
@@ -32,8 +45,8 @@ impl SqliteStore {
             .connect_with(opts)
             .await
             .map_err(|e| StoreError::Backend(e.to_string()))?;
-        sqlx::migrate!("./migrations")
-            .run(&pool)
+        sqlx::raw_sql(SCHEMA)
+            .execute(&pool)
             .await
             .map_err(|e| StoreError::Backend(e.to_string()))?;
         // The DB holds an index of note paths + error text — restrict it to the owner.

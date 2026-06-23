@@ -32,7 +32,9 @@ sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Storage
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+# sqlite only; no `macros`/`migrate` so the mysql/postgres drivers (and their
+# rsa dependency, RUSTSEC-2023-0071) are never pulled. Schema runs via raw_sql.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 
 # Filesystem watching
 notify = "6"

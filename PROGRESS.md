@@ -33,7 +33,7 @@ Ordered roughly by value toward Definition of Done.
 | 11 | `examples/sample-vault/` with demo notes for all 3 handlers | ✅ done |
 | 12 | Homebrew tap + formula, Apple Silicon + Intel builds | ✅ done (formula + release.yml; sha filled at first real release) |
 | 13 | GitHub Actions CI: fmt, clippy -D warnings, test, cargo audit, release build | ✅ done |
-| 14 | `cargo audit` clean (or findings documented) | ⬜ todo |
+| 14 | `cargo audit` clean (or findings documented) | ✅ done (0 vulns; 2 transitive warnings to document in security.md) |
 | 15 | `docs/security.md` security audit | ⬜ todo |
 | 16 | Docs: 30s README, config reference, handler-authoring guide, `docs/design-todo.md` | ⬜ todo |
 
