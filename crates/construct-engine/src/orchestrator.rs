@@ -136,6 +136,7 @@ impl Orchestrator {
         // Dispatch by pipeline.
         use crate::pipelines::PipelineKind;
         match self.pipeline {
+            PipelineKind::RemindMe => self.run_remind(&run_id, path, &original).await,
             PipelineKind::Research => self.run_research(&run_id, path, &original).await,
             PipelineKind::Summarize => self.run_summarize(&run_id, path, &original).await,
             PipelineKind::Tag => self.run_tag(&run_id, path, &original).await,
@@ -150,6 +151,51 @@ impl Orchestrator {
                 .await
             }
         }
+    }
+
+    /// remind-me pipeline: fully deterministic. Parse the reminder, write it back,
+    /// done. **No model is ever invoked** — `self.provider` is untouched here. This
+    /// is the handler that proves the deterministic-first thesis.
+    async fn run_remind(&self, run_id: &RunId, path: &Path, original: &str) -> anyhow::Result<()> {
+        use construct_core::clock::{Clock, SystemClock};
+        self.store
+            .update_status(run_id, RunStatus::Running, None)
+            .await?;
+        let now = SystemClock.now_local();
+        let note = Note::parse(original);
+        let Some(reminder) = crate::pipelines::remind::parse_reminder(&note.body, now) else {
+            return self
+                .fail(
+                    run_id,
+                    path,
+                    "no \"remind me to …\" instruction found in note",
+                )
+                .await;
+        };
+        let current = std::fs::read_to_string(path)?;
+        let applied = crate::pipelines::remind::apply_reminder(
+            &current,
+            &reminder,
+            now.date_naive(),
+            self.done_tag.as_deref(),
+        );
+        write_atomic(path, &applied)?;
+        self.store
+            .update_status(run_id, RunStatus::Done, None)
+            .await?;
+        self.store
+            .append_event(
+                run_id,
+                "remind",
+                "done",
+                serde_json::json!({
+                    "deterministic": true,
+                    "task": reminder.task,
+                    "due": reminder.due.map(|d| d.to_rfc3339()),
+                }),
+            )
+            .await?;
+        Ok(())
     }
 
     /// Organize pipeline: agent loop → gate → propose a move for human review.
@@ -1165,6 +1211,58 @@ mod tests {
         // Unchanged: still 'review', proposal intact, NOT flipped to done by the research branch.
         assert!(after.contains("construct_status: review"));
         assert!(after.contains("construct_proposed_move: Projects"));
+    }
+
+    #[tokio::test]
+    async fn remind_runs_with_zero_model_calls() {
+        use crate::testkit::PanicModel;
+        let dir = tempfile::tempdir().unwrap();
+        let note_path = dir.path().join("r.md");
+        std::fs::write(
+            &note_path,
+            "remind me to call the dentist tomorrow #theconstruct/remind-me",
+        )
+        .unwrap();
+        // PanicModel panics if the model is ever touched. If this test passes, the
+        // remind-me pipeline provably made zero model calls.
+        let mut o = orch(Arc::new(PanicModel)).await;
+        o.pipeline = PipelineKind::RemindMe;
+        o.rule = "remind-me".into();
+        o.vault_path = dir.path().to_path_buf();
+        o.handle(VaultEvent::NoteTagged {
+            path: note_path.clone(),
+            tag: "theconstruct/remind-me".into(),
+        })
+        .await
+        .unwrap();
+        let after = std::fs::read_to_string(&note_path).unwrap();
+        assert!(after.contains("construct_status: done"));
+        assert!(after.contains("⏰ Reminder:"));
+        assert!(after.contains("call the dentist"));
+        assert!(after.contains("construct_reminder_due"));
+        // The run was recorded as deterministic.
+        let runs = o.store.list_runs(10).await.unwrap();
+        assert_eq!(runs[0].status, RunStatus::Done);
+    }
+
+    #[tokio::test]
+    async fn remind_without_instruction_errors() {
+        use crate::testkit::PanicModel;
+        let dir = tempfile::tempdir().unwrap();
+        let note_path = dir.path().join("r.md");
+        std::fs::write(&note_path, "just a note #theconstruct/remind-me").unwrap();
+        let mut o = orch(Arc::new(PanicModel)).await;
+        o.pipeline = PipelineKind::RemindMe;
+        o.rule = "remind-me".into();
+        o.vault_path = dir.path().to_path_buf();
+        o.handle(VaultEvent::NoteTagged {
+            path: note_path.clone(),
+            tag: "theconstruct/remind-me".into(),
+        })
+        .await
+        .unwrap();
+        let after = std::fs::read_to_string(&note_path).unwrap();
+        assert!(after.contains("construct_status: error"));
     }
 
     #[tokio::test]

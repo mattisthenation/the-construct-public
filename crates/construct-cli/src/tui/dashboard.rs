@@ -163,6 +163,10 @@ fn draw(f: &mut Frame, ctx: &DashboardCtx, state: &State) {
             let style = match kind {
                 EventKind::Error => Style::default().fg(Color::Red),
                 EventKind::Info => Style::default().fg(Color::DarkGray),
+                // The thesis, made visible: "handled without a model" glows green.
+                EventKind::Deterministic => Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
                 _ => Theme::body(),
             };
             ListItem::new(format!("{time}  {:<6} {msg}", kind.label())).style(style)

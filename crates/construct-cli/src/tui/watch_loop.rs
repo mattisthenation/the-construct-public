@@ -537,6 +537,13 @@ pub async fn run_watch(
                     (orchestrators.get(&tag), event.clone())
                 {
                     let o = o.clone();
+                    // Mark deterministic handlers distinctly in the activity log —
+                    // "handled without a model" is the product's whole claim.
+                    let kind = if o.pipeline.is_deterministic() {
+                        EventKind::Deterministic
+                    } else {
+                        EventKind::Run
+                    };
                     let lock = lock_for(&note_locks, &path);
                     let ev_tx = events.clone();
                     tokio::spawn(async move {
@@ -545,9 +552,16 @@ pub async fn run_watch(
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
-                        emit(&ev_tx, EventKind::Run, format!("{name} → #{t}"));
+                        emit(&ev_tx, kind, format!("{name} → #{t}"));
                         match o.handle(VaultEvent::NoteTagged { path, tag: t }).await {
-                            Ok(()) => emit(&ev_tx, EventKind::Run, format!("{name} done")),
+                            Ok(()) => {
+                                let done = if kind == EventKind::Deterministic {
+                                    format!("{name} done (no model call)")
+                                } else {
+                                    format!("{name} done")
+                                };
+                                emit(&ev_tx, kind, done)
+                            }
                             Err(e) => {
                                 tracing::error!("handler error: {e}");
                                 emit(&ev_tx, EventKind::Error, format!("{name}: {e}"));

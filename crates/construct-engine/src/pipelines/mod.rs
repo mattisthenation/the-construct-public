@@ -3,6 +3,7 @@ pub mod daily;
 pub mod inbox;
 pub mod journal_tag;
 pub mod organize;
+pub mod remind;
 pub mod research;
 pub mod summarize;
 pub mod tag;
@@ -10,6 +11,8 @@ pub mod tag;
 /// Which built-in pipeline a rule selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineKind {
+    /// Deterministic: parse "remind me to X" and record it. NEVER calls a model.
+    RemindMe,
     Research,
     Summarize,
     Tag,
@@ -21,6 +24,8 @@ pub enum PipelineKind {
 impl PipelineKind {
     pub fn from_name(name: &str) -> Option<PipelineKind> {
         match name {
+            // accept both the kebab-case handler name and a toml-friendly alias
+            "remind-me" | "remind_me" => Some(PipelineKind::RemindMe),
             "research" => Some(PipelineKind::Research),
             "summarize" => Some(PipelineKind::Summarize),
             "tag" => Some(PipelineKind::Tag),
@@ -32,7 +37,15 @@ impl PipelineKind {
     }
     /// Auto-apply pipelines finish without a human review step.
     pub fn is_auto_apply(&self) -> bool {
-        matches!(self, PipelineKind::Summarize | PipelineKind::Tag)
+        matches!(
+            self,
+            PipelineKind::Summarize | PipelineKind::Tag | PipelineKind::RemindMe
+        )
+    }
+    /// True for pipelines that run entirely deterministically — no LLM call.
+    /// This is the thesis made checkable.
+    pub fn is_deterministic(&self) -> bool {
+        matches!(self, PipelineKind::RemindMe)
     }
 }
 

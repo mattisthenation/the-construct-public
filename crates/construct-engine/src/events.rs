@@ -9,6 +9,9 @@ pub enum EventKind {
     Brief,
     Daily,
     Run,
+    /// A note handled entirely by deterministic code — no model call. The thesis,
+    /// made visible: the dashboard renders these distinctly.
+    Deterministic,
     Error,
     Info,
 }
@@ -20,6 +23,7 @@ impl EventKind {
             EventKind::Brief => "brief",
             EventKind::Daily => "daily",
             EventKind::Run => "run",
+            EventKind::Deterministic => "no-model",
             EventKind::Error => "error",
             EventKind::Info => "info",
         }

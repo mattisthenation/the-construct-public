@@ -28,6 +28,17 @@ impl ModelProvider for ScriptedModel {
     }
 }
 
+/// A model provider that panics if `chat` is ever called. Used to PROVE a
+/// pipeline is fully deterministic: if the model is touched, the test fails loudly.
+pub struct PanicModel;
+
+#[async_trait]
+impl ModelProvider for PanicModel {
+    async fn chat(&self, _req: ChatRequest) -> Result<ChatResponse, ModelError> {
+        panic!("deterministic pipeline must never call the model");
+    }
+}
+
 /// A tool that returns a fixed string and records its calls.
 pub struct EchoTool {
     pub name: String,

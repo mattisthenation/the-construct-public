@@ -25,7 +25,7 @@ Ordered roughly by value toward Definition of Done.
 | 3 | Config path → XDG `~/.config/construct/config.toml` (+ env override) | ✅ done |
 | 4 | Add `construct run <note>` subcommand | ⬜ todo |
 | 5 | Add `construct doctor` subcommand | ⬜ todo |
-| 6 | **`remind-me` handler — fully deterministic, zero model calls (thesis proof)** | ⬜ todo |
+| 6 | **`remind-me` handler — fully deterministic, zero model calls (thesis proof)** | ✅ done |
 | 7 | `file-this` deterministic-first (rules before any model) | ⬜ todo (partial today: escalate-only via tag/organize) |
 | 8 | Internal module naming: Priori (judge) / Determa (execute) | ⬜ todo |
 | 9 | Cloud providers: Anthropic + OpenAI-compatible (escalation tier) | ⬜ todo |
