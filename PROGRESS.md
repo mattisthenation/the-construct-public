@@ -21,8 +21,8 @@ Ordered roughly by value toward Definition of Done.
 | # | Item | Status |
 |---|------|--------|
 | 1 | Workspace builds + green baseline | ✅ done |
-| 2 | Rename binary `entertheconstruct` → `construct` | ⬜ todo |
-| 3 | Config path → XDG `~/.config/construct/config.toml` (+ env override) | ⬜ todo |
+| 2 | Rename binary `entertheconstruct` → `construct` | ✅ done |
+| 3 | Config path → XDG `~/.config/construct/config.toml` (+ env override) | ✅ done |
 | 4 | Add `construct run <note>` subcommand | ⬜ todo |
 | 5 | Add `construct doctor` subcommand | ⬜ todo |
 | 6 | **`remind-me` handler — fully deterministic, zero model calls (thesis proof)** | ⬜ todo |
@@ -51,6 +51,11 @@ Ordered roughly by value toward Definition of Done.
 
 ## Needs Matt's decision (route around, don't block)
 - (none yet)
+
+## Deferred / parked
+- `scripts/{setup-home,update,release}.sh` still reference the old `entertheconstruct`
+  binary and `~/.theconstruct` single-folder dist model. These get rewritten or removed
+  wholesale when we build the Homebrew install flow (item 12), not patched piecemeal.
 
 ## Definition of Done checklist
 1. ⬜ Tests/clippy/fmt/audit green  2. ⬜ 3 handlers demoable + remind-me zero-model

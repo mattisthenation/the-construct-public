@@ -5,10 +5,10 @@ mod tui;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load ~/.theconstruct/.env (or $CONSTRUCT_HOME/.env) so API keys written
-    // by `entertheconstruct setup` are available without shell-profile exports.
-    // Existing process env vars always win (dotenvy never overrides).
-    if let Some(env_path) = construct_home_env_path() {
+    // Load <config-dir>/.env so API keys written by `construct setup` are
+    // available without shell-profile exports. Existing process env vars always
+    // win (dotenvy never overrides).
+    if let Some(env_path) = commands::default_config_dir().map(|d| d.join(".env")) {
         if env_path.exists() {
             let _ = dotenvy::from_path(&env_path);
         }
@@ -26,17 +26,4 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     commands::run().await
-}
-
-/// $CONSTRUCT_HOME/.env, else ~/.theconstruct/.env. Mirrors the config-path
-/// resolution in commands.rs.
-fn construct_home_env_path() -> Option<std::path::PathBuf> {
-    if let Some(home) = std::env::var_os("CONSTRUCT_HOME") {
-        return Some(std::path::PathBuf::from(home).join(".env"));
-    }
-    std::env::var_os("HOME").map(|h| {
-        std::path::PathBuf::from(h)
-            .join(".theconstruct")
-            .join(".env")
-    })
 }

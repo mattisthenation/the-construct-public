@@ -4,7 +4,7 @@ version = "0.4.0"
 edition.workspace = true
 
 [[bin]]
-name = "entertheconstruct"
+name = "construct"
 path = "src/main.rs"
 
 [dependencies]

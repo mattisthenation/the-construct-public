@@ -1,4 +1,4 @@
-//! Live dashboard for `entertheconstruct watch`: status header, activity feed,
+//! Live dashboard for `construct watch`: status header, activity feed,
 //! pending-review count. Pure consumer of the EngineEvent broadcast — engine
 //! pipelines never block on the UI.
 use construct_core::store::{RunRecord, Store};

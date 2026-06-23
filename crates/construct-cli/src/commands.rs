@@ -6,34 +6,43 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    name = "entertheconstruct",
+    name = "construct",
     about = "The Construct — local-first agent runtime"
 )]
 struct Cli {
-    /// Path to config file. Defaults to $CONSTRUCT_HOME/construct.toml, else
-    /// ~/.theconstruct/construct.toml — so the command works from any directory.
+    /// Path to config file. Defaults to $CONSTRUCT_HOME/config.toml, else the
+    /// XDG location ~/.config/construct/config.toml — so it works from any directory.
     #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
 
-/// Resolve the config path: explicit `--config`, else `$CONSTRUCT_HOME/construct.toml`,
-/// else `~/.theconstruct/construct.toml`. The DB and prompt files resolve relative to
-/// this file's directory, so a stable config path gives a stable per-machine home.
+/// The directory that holds `config.toml`, the run DB, prompt overrides, and `.env`.
+/// Resolution order: `$CONSTRUCT_HOME` (portable single-folder mode) → XDG
+/// `$XDG_CONFIG_HOME/construct` → `~/.config/construct`. Everything resolves
+/// relative to this dir, so a stable home gives a stable per-machine install.
+pub fn default_config_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("CONSTRUCT_HOME") {
+        return Some(PathBuf::from(home));
+    }
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("construct"));
+        }
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config").join("construct"))
+}
+
+/// Resolve the config file: explicit `--config` wins, else `<config-dir>/config.toml`,
+/// else a last-resort CWD fallback.
 fn resolve_config_path(explicit: Option<PathBuf>) -> PathBuf {
     if let Some(p) = explicit {
         return p;
     }
-    if let Some(home) = std::env::var_os("CONSTRUCT_HOME") {
-        return PathBuf::from(home).join("construct.toml");
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
-            .join(".theconstruct")
-            .join("construct.toml");
-    }
-    PathBuf::from("construct.toml") // last-resort CWD fallback
+    default_config_dir()
+        .map(|d| d.join("config.toml"))
+        .unwrap_or_else(|| PathBuf::from("config.toml"))
 }
 
 #[derive(Subcommand)]
@@ -50,7 +59,7 @@ enum Command {
         #[arg(long = "key")]
         keys: Vec<String>,
     },
-    /// Write a starter construct.toml.
+    /// Write a starter config.toml.
     Init,
     /// Validate the config file.
     ConfigCheck,

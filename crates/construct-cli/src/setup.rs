@@ -191,9 +191,7 @@ pub async fn run_setup(config_path: &Path, home: &Path, args: SetupArgs) -> anyh
         println!("  keys:   {} (mode 600)", env_path.display());
     }
 
-    println!(
-        "\nSetup complete. Next:\n  entertheconstruct config-check\n  entertheconstruct watch"
-    );
+    println!("\nSetup complete. Next:\n  construct config-check\n  construct watch");
     Ok(())
 }
 
