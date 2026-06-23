@@ -41,6 +41,25 @@ pub async fn run(config_path: &Path) -> anyhow::Result<bool> {
         check(true, &format!("vault writable: {vault}"));
     }
 
+    // 2b. Inbox folder (on by default). Not a hard failure — `watch` creates it.
+    if let Some(inbox) = &cfg.inbox {
+        let dir = vault_path.join(&inbox.folder);
+        if dir.is_dir() {
+            check(
+                true,
+                &format!(
+                    "inbox folder: {}/ (idle {}m)",
+                    inbox.folder, inbox.idle_minutes
+                ),
+            );
+        } else {
+            println!(
+                "  !  inbox folder {}/ missing — `construct watch` will create it",
+                inbox.folder
+            );
+        }
+    }
+
     // 3. Ollama reachability — one check per distinct base_url.
     let mut seen = std::collections::BTreeSet::new();
     for agent in &cfg.agents {
