@@ -5,6 +5,28 @@ Dated narrative of each autonomous build iteration. Newest entries at the top.
 
 ---
 
+## 2026-06-23 — Iterations 3–6: handlers, providers, audit, TUI
+
+- **run + doctor + naming** (iter 3): `construct run <note>` (shared
+  `build_orchestrator` helper) and `construct doctor` (config/vault/provider/key
+  preflight). Canonical handler names `remind-me`/`file-this`/`research-this`
+  (old names aliased). Background agents produced `examples/sample-vault/` and the
+  CI/release/Homebrew/license set.
+- **cloud providers** (iter 4): `construct-model-cloud` — OpenAiProvider (reuses
+  Ollama's OpenAI-compatible codec + bearer token) and AnthropicProvider
+  (`/v1/messages` codec). `provider_for()` factory + `Agent.api_key_env`.
+- **audit fix** (iter 5): dropped sqlx `macros`/`migrate` (pulled rsa via unused
+  mysql/postgres) → run schema via `raw_sql` over embedded idempotent migrations.
+  `cargo audit` exits 0; two transitive ratatui warnings remain (documented).
+- **file-this + Priori** (iter 6): explicit `priori::judge` deterministic-vs-escalate
+  seam; file-this gets a deterministic keyword-rule tier (zero model on match).
+  Dashboard TUI rebuilt to the mockup (two panes + four-box bottom row + cheap
+  digital rain) by a background agent.
+
+Concurrency note: the TUI agent briefly `git stash`ed engine WIP to isolate its
+tests, which surfaced as transient "reverted" file snapshots mid-build; it
+restored everything (`git stash pop`) and the final tree is intact. 217 tests green.
+
 ## 2026-06-23 — Iteration 2: the `remind-me` handler (thesis proof)
 
 Built the deterministic `remind-me` pipeline — the handler that proves "most of
