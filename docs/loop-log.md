@@ -67,7 +67,7 @@ workspace manifest, so nothing built. No git commits, no PROGRESS.md.
 - Scrubbed the one personal tell: a `/Users/matt/Vault` test fixture → `/Users/example/Vault`.
 - Wrote `PROGRESS.md` (decisions, gap analysis, DoD checklist) and this log.
 
-**Decisions:** Matt chose refactor-in-place + CLAUDE.md-as-truth + fully-autonomous.
+**Decisions:** the maintainer chose refactor-in-place + spec-as-truth + fully-autonomous.
 
 **Next:** Rename binary to `construct`; then the high-value narrative work —
 the deterministic `remind-me` handler that proves the thesis.

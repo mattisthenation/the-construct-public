@@ -4,7 +4,7 @@
 > reconcile against actual repo state at the start of each loop. See `docs/loop-log.md`
 > for the dated narrative of what happened each iteration.
 
-## Decisions (from Matt, 2026-06-23)
+## Decisions (from the maintainer, 2026-06-23)
 - **Refactor the existing personal-Construct crates in place** (don't clean-room rebuild).
 - **CLAUDE.md is the source of truth** when it conflicts with existing code (naming, handlers).
 - **Run fully autonomous** to the 8-point Definition of Done.
@@ -49,7 +49,7 @@ Ordered roughly by value toward Definition of Done.
 - `gate.rs` does model-output grounding validation (rejects fabricated sources) — keep.
 - SSRF guard in `construct-tools/web_fetch.rs` blocks private IP ranges — keep (those "192.168" hits are correct test cases, not personal data).
 
-## Needs Matt's decision (route around, don't block)
+## Needs maintainer decision (route around, don't block)
 - (none yet)
 
 ## Deferred / parked

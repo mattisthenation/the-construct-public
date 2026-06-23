@@ -1,7 +1,9 @@
 # Rust build output
 /target
-# Packaged distribution artifacts (built by scripts/release.sh, not source)
+# Packaged distribution artifacts (built by the release workflow, not source)
 /dist
+# Internal build directive — not part of the public product
+/CLAUDE.md
 # Local databases / state
 *.db
 *.db-journal
