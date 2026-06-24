@@ -11,7 +11,7 @@ use construct_engine::events::{EngineEvent, EventKind};
 use construct_store::SqliteStore;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -77,6 +77,8 @@ pub struct DashboardCtx {
     pub inbox: Option<(String, u64)>,
     /// Where tracing logs are being written (so the user can `tail` them).
     pub log_path: Option<String>,
+    /// The config file, for the in-TUI view (`c`) and edit (`e`) commands.
+    pub config_path: std::path::PathBuf,
 }
 
 struct State {
@@ -88,6 +90,9 @@ struct State {
     pending_review: usize,
     started: Instant,
     paused: bool,
+    frame: u64,                         // render tick, drives the spinner flourish
+    config_view: Option<(String, u16)>, // raw config text + scroll offset, when open
+    flash: Option<(String, Instant)>,   // transient status message
 }
 
 pub async fn run_dashboard(
@@ -106,6 +111,9 @@ pub async fn run_dashboard(
         pending_review: 0,
         started: Instant::now(),
         paused: false,
+        frame: 0,
+        config_view: None,
+        flash: None,
     };
     let mut last_refresh = Instant::now() - Duration::from_secs(10);
 
@@ -149,6 +157,7 @@ pub async fn run_dashboard(
             last_refresh = Instant::now();
         }
 
+        state.frame = state.frame.wrapping_add(1);
         if let Err(e) = terminal.draw(|f| draw(f, &ctx, &state)) {
             break Err(e.into());
         }
@@ -159,19 +168,47 @@ pub async fn run_dashboard(
         };
         if polled {
             match event::read() {
-                Ok(Event::Key(key)) => match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                    KeyCode::Char('p') => {
-                        state.paused = !state.paused;
-                        paused.store(state.paused, Ordering::Relaxed);
+                Ok(Event::Key(key)) => {
+                    // When the config viewer is open, keys drive it instead.
+                    if let Some((_, scroll)) = &mut state.config_view {
+                        match key.code {
+                            KeyCode::Char('c') | KeyCode::Char('q') | KeyCode::Esc => {
+                                state.config_view = None
+                            }
+                            KeyCode::Char('e') => {
+                                edit_config(&mut terminal, &ctx.config_path, &mut state.flash);
+                                state.config_view = None;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                *scroll = scroll.saturating_add(1)
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
+                            _ => {}
+                        }
+                        continue;
                     }
-                    KeyCode::Char('o') => {
-                        let _ = std::process::Command::new("open")
-                            .arg(&ctx.day_note_path)
-                            .spawn();
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                        KeyCode::Char('p') => {
+                            state.paused = !state.paused;
+                            paused.store(state.paused, Ordering::Relaxed);
+                        }
+                        KeyCode::Char('o') => {
+                            let _ = std::process::Command::new("open")
+                                .arg(&ctx.day_note_path)
+                                .spawn();
+                        }
+                        KeyCode::Char('c') => {
+                            let text = std::fs::read_to_string(&ctx.config_path)
+                                .unwrap_or_else(|e| format!("could not read config: {e}"));
+                            state.config_view = Some((text, 0));
+                        }
+                        KeyCode::Char('e') => {
+                            edit_config(&mut terminal, &ctx.config_path, &mut state.flash)
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                },
+                }
                 Ok(_) => {}
                 Err(e) => break Err(e.into()),
             }
@@ -181,11 +218,44 @@ pub async fn run_dashboard(
     res
 }
 
+/// Suspend the TUI, open the config in `$VISUAL`/`$EDITOR` (fallback `vi`), then
+/// re-enter. The daemon already loaded its config, so changes apply on the next
+/// `construct watch` — we flash a reminder.
+fn edit_config(
+    terminal: &mut ratatui::DefaultTerminal,
+    config_path: &std::path::Path,
+    flash: &mut Option<(String, Instant)>,
+) {
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_string());
+    ratatui::restore(); // leave the alternate screen so the editor owns the terminal
+    let status = std::process::Command::new(&editor)
+        .arg(config_path)
+        .status();
+    *terminal = ratatui::init(); // re-enter the alternate screen
+    let _ = terminal.clear();
+    *flash = Some((
+        match status {
+            Ok(s) if s.success() => "config saved · restart `construct watch` to apply".to_string(),
+            _ => format!("couldn't launch editor `{editor}` (set $EDITOR)"),
+        },
+        Instant::now(),
+    ));
+}
+
+/// Braille spinner — the cheap "uplink alive" flourish; advances each render tick.
+const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
 fn draw(f: &mut Frame, ctx: &DashboardCtx, state: &State) {
-    // Title bar on top; everything else is a left/right split below it.
+    // Title bar, main split, then a thin footer (flourish + flash).
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
         .split(f.area());
 
     draw_title(f, ctx, state, rows[0]);
@@ -196,7 +266,81 @@ fn draw(f: &mut Frame, ctx: &DashboardCtx, state: &State) {
         .split(rows[1]);
 
     draw_left(f, cols[0], state); // two stacked panels: Activity + Recent Notes
-    draw_right(f, ctx, state, cols[1]); // four stacked boxes: logo, rain, keys, status
+    draw_right(f, ctx, state, cols[1]); // logo, meter, keys, status
+    draw_footer(f, state, rows[2]);
+
+    // Config viewer overlays everything when open.
+    if let Some((text, scroll)) = &state.config_view {
+        draw_config_overlay(f, ctx, text, *scroll);
+    }
+}
+
+/// Footer: an animated "uplink" flourish on the left, and a transient flash
+/// message (e.g. after editing the config) for ~4s on the right.
+fn draw_footer(f: &mut Frame, state: &State, area: Rect) {
+    let spin = SPINNER[(state.frame as usize) % SPINNER.len()];
+    let mut spans = vec![
+        Span::styled(format!(" {spin} "), Style::default().fg(NEON)),
+        Span::styled("uplink ", Style::default().fg(DIM)),
+        Span::styled(
+            "c config · e edit · o open · p pause · q quit",
+            Style::default().fg(DIM),
+        ),
+    ];
+    if let Some((msg, at)) = &state.flash {
+        if at.elapsed() < Duration::from_secs(4) {
+            spans.push(Span::styled("   ▸ ", Style::default().fg(AMBER)));
+            spans.push(Span::styled(
+                msg.clone(),
+                Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Centered modal showing the raw config file with a scroll offset.
+fn draw_config_overlay(f: &mut Frame, ctx: &DashboardCtx, text: &str, scroll: u16) {
+    let area = centered(f.area(), 80, 80);
+    f.render_widget(Clear, area);
+    let title = format!(" CONFIG · {} ", ctx.config_path.display());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(NEON))
+        .title(Span::styled(
+            title,
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " ↑/↓ scroll · e edit · c/esc close ",
+            Style::default().fg(DIM),
+        ));
+    let body = Paragraph::new(text)
+        .style(Style::default().fg(FG))
+        .block(block)
+        .scroll((scroll, 0));
+    f.render_widget(body, area);
+}
+
+/// A rectangle centered in `area`, sized to the given width/height percentages.
+fn centered(area: Rect, pct_x: u16, pct_y: u16) -> Rect {
+    let v = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - pct_y) / 2),
+            Constraint::Percentage(pct_y),
+            Constraint::Percentage((100 - pct_y) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - pct_x) / 2),
+            Constraint::Percentage(pct_x),
+            Constraint::Percentage((100 - pct_x) / 2),
+        ])
+        .split(v[1])[1]
 }
 
 fn draw_title(f: &mut Frame, _ctx: &DashboardCtx, state: &State, area: Rect) {
@@ -300,8 +444,8 @@ fn draw_right(f: &mut Frame, ctx: &DashboardCtx, state: &State, area: Rect) {
         .constraints([
             Constraint::Length(5), // logo
             Constraint::Length(6), // deterministic-first meter (≈ logo size)
-            Constraint::Length(5), // commands
-            Constraint::Min(7),    // status — the largest box, fills the rest
+            Constraint::Length(7), // commands
+            Constraint::Min(6),    // status — the largest box, fills the rest
         ])
         .split(area);
 
@@ -322,9 +466,11 @@ fn draw_right(f: &mut Frame, ctx: &DashboardCtx, state: &State, area: Rect) {
         ])
     };
     let commands = Paragraph::new(vec![
-        key("q", "quit"),
-        key("p", "pause / resume"),
+        key("c", "view config"),
+        key("e", "edit config"),
         key("o", "open today's note"),
+        key("p", "pause / resume"),
+        key("q", "quit"),
     ])
     .block(panel("KEYS", false));
     f.render_widget(commands, boxes[2]);

@@ -410,6 +410,7 @@ pub async fn run() -> anyhow::Result<()> {
                         .as_ref()
                         .map(|i| (i.folder.clone(), i.idle_minutes)),
                     log_path: log_file.as_ref().map(|p| p.display().to_string()),
+                    config_path: config.clone(),
                 };
                 // Engine in a background task; dashboard owns the terminal.
                 // If the dashboard exits (q / Esc / error), the engine task is
