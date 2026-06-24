@@ -1141,9 +1141,17 @@ impl Orchestrator {
     }
 
     async fn fail(&self, run_id: &RunId, path: &Path, msg: &str) -> anyhow::Result<()> {
+        // Surface the reason everywhere it helps: the log, the note itself (open it
+        // and see why), and the run record (which the TUI now reads back).
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        tracing::warn!("note failed: {name}: {msg}");
         let current = std::fs::read_to_string(path).unwrap_or_default();
         let mut note = Note::parse(&current);
         note.set_str(crate::pipeline::STATUS_KEY, "error");
+        note.set_str(crate::pipelines::ERROR_KEY, msg);
         let _ = write_atomic(path, &note.to_string());
         self.store
             .update_status(run_id, RunStatus::Error, Some(msg.to_string()))

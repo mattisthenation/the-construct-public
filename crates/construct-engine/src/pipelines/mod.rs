@@ -56,14 +56,17 @@ impl PipelineKind {
 
 pub const STATUS_KEY: &str = "construct_status";
 pub const RUN_KEY: &str = "construct_run_id";
+/// Frontmatter key holding the human-readable reason a note failed.
+pub const ERROR_KEY: &str = "construct_error";
 
 /// claim: stamp status=queued + run id onto the note text. Pure transform.
-/// Shared by all pipelines.
+/// Shared by all pipelines. Clears any stale error from a prior failed run.
 pub fn apply_claim(text: &str, run_id: &str) -> String {
     use construct_obsidian::frontmatter::Note;
     let mut note = Note::parse(text);
     note.set_str(STATUS_KEY, "queued");
     note.set_str(RUN_KEY, run_id);
+    note.remove(ERROR_KEY);
     note.to_string()
 }
 

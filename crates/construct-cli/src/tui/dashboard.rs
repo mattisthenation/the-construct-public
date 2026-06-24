@@ -442,10 +442,18 @@ fn draw_left(f: &mut Frame, area: Rect, state: &State) {
                 "done" | "accepted" => GREEN,
                 _ => FG,
             };
-            ListItem::new(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(format!(" {} ", status_glyph(s)), Style::default().fg(color)),
                 Span::styled(run_row(r), Style::default().fg(color)),
-            ]))
+            ];
+            // Show the failure reason inline on error rows (first line, trimmed).
+            if s == "error" {
+                if let Some(err) = &r.error {
+                    let why = err.lines().next().unwrap_or(err);
+                    spans.push(Span::styled(format!("  — {why}"), Style::default().fg(DIM)));
+                }
+            }
+            ListItem::new(Line::from(spans))
         })
         .collect();
     f.render_widget(

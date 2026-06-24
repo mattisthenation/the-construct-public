@@ -199,6 +199,28 @@ pub async fn run_once(cfg: Config, base_dir: PathBuf, note: PathBuf) -> anyhow::
     Ok(())
 }
 
+/// After a handler returns `Ok`, the note may still have been marked failed by the
+/// engine's `fail()` path (it records the reason but returns `Ok`). Read the run
+/// back so the activity feed shows the real outcome **and the reason**, instead of
+/// a misleading "done".
+async fn report_outcome(
+    store: &Arc<dyn Store>,
+    ev_tx: &EventSender,
+    note_path: &str,
+    name: &str,
+    ok_kind: EventKind,
+    ok_msg: String,
+) {
+    match store.run_for_note(note_path).await {
+        Ok(Some(run)) if run.status == construct_core::types::RunStatus::Error => {
+            let why = run.error.unwrap_or_else(|| "failed".to_string());
+            tracing::warn!("{name}: {why}");
+            emit(ev_tx, EventKind::Error, format!("{name}: {why}"));
+        }
+        _ => emit(ev_tx, ok_kind, ok_msg),
+    }
+}
+
 /// How a trigger event should be routed to orchestrators.
 #[derive(Debug, PartialEq)]
 enum RouteTarget {
@@ -672,6 +694,7 @@ pub async fn run_watch(
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
+                        let note_path = path.to_string_lossy().to_string();
                         emit(&ev_tx, kind, format!("{name} → #{t}"));
                         // catch_unwind so a panic in one handler is logged and
                         // reported (not just silently dropped); the daemon and the
@@ -679,12 +702,16 @@ pub async fn run_watch(
                         let fut = o.handle(VaultEvent::NoteTagged { path, tag: t });
                         match std::panic::AssertUnwindSafe(fut).catch_unwind().await {
                             Ok(Ok(())) => {
+                                // handle() can return Ok even when the note was marked
+                                // failed (fail() records the reason but returns Ok) —
+                                // read it back so the feed shows why.
                                 let done = if kind == EventKind::Deterministic {
                                     format!("{name} done (no model call)")
                                 } else {
                                     format!("{name} done")
                                 };
-                                emit(&ev_tx, kind, done)
+                                report_outcome(&o.store, &ev_tx, &note_path, &name, kind, done)
+                                    .await;
                             }
                             Ok(Err(e)) => {
                                 tracing::error!("handler error: {e}");
@@ -731,7 +758,17 @@ pub async fn run_watch(
                             .unwrap_or_default();
                         emit(&ev_tx, EventKind::Inbox, format!("{name} processing"));
                         match o.handle_idle(&path).await {
-                            Ok(()) => emit(&ev_tx, EventKind::Inbox, format!("{name} done")),
+                            Ok(()) => {
+                                report_outcome(
+                                    &o.store,
+                                    &ev_tx,
+                                    &path.to_string_lossy(),
+                                    &name,
+                                    EventKind::Inbox,
+                                    format!("{name} done"),
+                                )
+                                .await
+                            }
                             Err(e) => {
                                 tracing::error!("inbox handler error: {e}");
                                 emit(&ev_tx, EventKind::Error, format!("{name}: {e}"));
