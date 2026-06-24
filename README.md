@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="docs/globe.png" alt="Websites on Computers" width="96">
+</p>
+
 # The Construct
+
+<sub>a **Websites on Computers** project 🌐</sub>
 
 **The folder is the prompt.** Drop a markdown note into a watched directory; The
 Construct reads it, decides how to handle it, does the work, writes the result

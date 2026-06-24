@@ -27,11 +27,28 @@ const AMBER: Color = Color::Rgb(255, 190, 70); // pending / paused / review
 const RED: Color = Color::Rgb(255, 80, 80); // errors
 const FG: Color = Color::Rgb(170, 225, 195); // body, greenish off-white
 
-/// ASCII/text logo for the dashboard. Intentionally tiny.
-// design-todo: replace with final ASCII logo (see docs/design-todo.md).
-const LOGO: &str = "╔═╗
-║C║  THE CONSTRUCT
-╚═╝  the folder is the prompt";
+/// The logo box content: the 🌐 brand mark, the name, the publisher, and the
+/// tagline. (A terminal can't render docs/globe.png, so the globe emoji stands in.)
+// design-todo: see docs/design-todo.md.
+fn logo_lines() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::raw("🌐  "),
+            Span::styled(
+                "THE CONSTRUCT",
+                Style::default().fg(NEON).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(Span::styled(
+            "    websites on computers",
+            Style::default().fg(CYAN),
+        )),
+        Line::from(Span::styled(
+            "    the folder is the prompt",
+            Style::default().fg(DIM),
+        )),
+    ]
+}
 
 /// A dim-green panel with a bracketed, cyan, uppercased title — the console motif.
 fn panel(title: &str, bright: bool) -> Block<'_> {
@@ -351,8 +368,9 @@ fn draw_title(f: &mut Frame, _ctx: &DashboardCtx, state: &State, area: Rect) {
     };
     let up = state.started.elapsed().as_secs();
     let line = Line::from(vec![
+        Span::raw(" 🌐 "),
         Span::styled(
-            " THE CONSTRUCT ",
+            "THE CONSTRUCT ",
             Style::default().fg(NEON).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -450,9 +468,7 @@ fn draw_right(f: &mut Frame, ctx: &DashboardCtx, state: &State, area: Rect) {
         .split(area);
 
     // --- Logo ---
-    let logo = Paragraph::new(LOGO)
-        .style(Style::default().fg(NEON).add_modifier(Modifier::BOLD))
-        .block(panel("◈", false));
+    let logo = Paragraph::new(logo_lines()).block(panel("🌐", false));
     f.render_widget(logo, boxes[0]);
 
     // --- Deterministic-first meter (the thesis, quantified) ---
