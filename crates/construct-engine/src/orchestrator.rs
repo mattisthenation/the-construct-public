@@ -212,13 +212,23 @@ impl Orchestrator {
         let now = SystemClock.now_local();
         let note = Note::parse(original);
         let Some(reminder) = crate::pipelines::remind::parse_reminder(&note.body, now) else {
-            return self
-                .fail(
+            // Tagged remind-me but no "remind me to …" line. Not an error — finish
+            // cleanly and note that nothing was scheduled.
+            let current = std::fs::read_to_string(path)?;
+            let applied = crate::pipelines::remind::apply_no_reminder(&current, now.date_naive());
+            write_atomic(path, &applied)?;
+            self.store
+                .update_status(run_id, RunStatus::Done, None)
+                .await?;
+            self.store
+                .append_event(
                     run_id,
-                    path,
-                    "no \"remind me to …\" instruction found in note",
+                    "remind",
+                    "none",
+                    serde_json::json!({"deterministic": true, "found": false}),
                 )
-                .await;
+                .await?;
+            return Ok(());
         };
         let current = std::fs::read_to_string(path)?;
         let applied = crate::pipelines::remind::apply_reminder(
@@ -1417,7 +1427,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remind_without_instruction_errors() {
+    async fn remind_without_instruction_completes_not_errors() {
         use crate::testkit::PanicModel;
         let dir = tempfile::tempdir().unwrap();
         let note_path = dir.path().join("r.md");
@@ -1433,7 +1443,12 @@ mod tests {
         .await
         .unwrap();
         let after = std::fs::read_to_string(&note_path).unwrap();
-        assert!(after.contains("construct_status: error"));
+        // A remind-me note with no instruction completes gracefully, not as an error.
+        assert!(after.contains("construct_status: done"));
+        assert!(!after.contains("construct_status: error"));
+        assert!(after.contains("none found"));
+        let runs = o.store.list_runs(10).await.unwrap();
+        assert_eq!(runs[0].status, RunStatus::Done);
     }
 
     #[tokio::test]

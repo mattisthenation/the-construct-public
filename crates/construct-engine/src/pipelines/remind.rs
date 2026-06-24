@@ -11,7 +11,7 @@
 //! ponytail: hand-rolled rather than pulling an NLP-date crate; widen the keyword
 //! set here if real notes need more forms — don't reach for a model.
 
-use super::{RUN_KEY, STATUS_KEY};
+use super::{ERROR_KEY, RUN_KEY, STATUS_KEY};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Weekday};
 use construct_obsidian::frontmatter::Note;
 
@@ -333,11 +333,32 @@ pub fn apply_reminder(
     }
     note.set_str(STATUS_KEY, "done");
     note.remove(RUN_KEY);
+    note.remove(ERROR_KEY);
     if let Some(tag) = done_tag {
         if !note.body.contains(&format!("#{tag}")) {
             note.body = format!("{}\n#{}\n", note.body.trim_end(), tag);
         }
     }
+    note.to_string()
+}
+
+/// The note is tagged `remind-me` but has no "remind me to …" line. That's not an
+/// error — complete gracefully and say so in the note (a managed block, so it's
+/// replaced cleanly if a real reminder is added later).
+pub fn apply_no_reminder(text: &str, captured: NaiveDate) -> String {
+    let mut note = Note::parse(text);
+    note.body = construct_obsidian::block::upsert_named_at_top(
+        &note.body,
+        "reminder",
+        &format!(
+            "**⏰ Reminder:** none found\n- _No \"remind me to …\" line in this note — nothing scheduled._\n- _Checked {captured} · handled deterministically — no model call._"
+        ),
+    );
+    note.set_str(STATUS_KEY, "done");
+    note.remove(RUN_KEY);
+    note.remove(ERROR_KEY);
+    note.remove(REMINDER_KEY);
+    note.remove(REMINDER_DUE_KEY);
     note.to_string()
 }
 
@@ -434,6 +455,17 @@ mod tests {
     #[test]
     fn no_instruction_returns_none() {
         assert!(parse_reminder("just some unrelated note text", now()).is_none());
+    }
+
+    #[test]
+    fn apply_no_reminder_completes_cleanly() {
+        let claimed = super::super::apply_claim("just a note", "run-1");
+        let out = apply_no_reminder(&claimed, now().date_naive());
+        let note = Note::parse(&out);
+        assert_eq!(note.get_str(STATUS_KEY).as_deref(), Some("done"));
+        assert!(note.get_str(RUN_KEY).is_none());
+        assert!(note.get_str(ERROR_KEY).is_none());
+        assert!(out.contains("none found"));
     }
 
     #[test]
