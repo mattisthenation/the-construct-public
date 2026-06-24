@@ -451,10 +451,13 @@ the note with a tidy reminder block and a due date — and tells you it did it
 
 ## Watching it work
 
-- `construct watch` opens a live dashboard (Activity, Recent Notes, status).
-  Deterministic, no-model handling shows in bright green — that's the whole idea.
+- `construct watch` opens a live dashboard (Activity, Recent Notes, a
+  deterministic-first meter, and status). No-model handling shows in bright green
+  — that's the whole idea. In the dashboard, press `c` to view your config and
+  `e` to edit it (no need to hunt down the TOML).
 - `construct status` prints run counts and anything awaiting your review.
 - `construct doctor` checks your setup (config, vault, whether Ollama is reachable).
+- Re-run `construct setup` anytime to change your LLM, model, or Inbox settings.
 
 ## Good to know
 

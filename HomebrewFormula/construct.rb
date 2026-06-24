@@ -12,7 +12,7 @@
 class Construct < Formula
   desc "Deterministic-first Obsidian companion: the folder is the prompt"
   homepage "https://github.com/mattisthenation/the-construct-public"
-  version "0.4.2"
+  version "0.4.3"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
