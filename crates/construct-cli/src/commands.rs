@@ -77,10 +77,14 @@ enum Command {
         #[arg(long)]
         headless: bool,
     },
-    /// Show watcher/run status summary.
+    /// Show watcher/run status summary (incl. recent errors and their reasons).
     Status,
-    /// List recent runs.
-    Runs,
+    /// List recent runs. Pass --errors to show only failures with their reason.
+    Runs {
+        /// Only show errored runs, each with its failure reason.
+        #[arg(long)]
+        errors: bool,
+    },
 }
 
 pub const SAMPLE_CONFIG: &str = r#"[construct]
@@ -195,6 +199,14 @@ agent = "Librarian"
 # [briefs]
 # folder = "AI/DailyBriefs"
 "#;
+
+/// File name of a note path (for tidy CLI output).
+fn note_basename(p: &str) -> &str {
+    std::path::Path::new(p)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(p)
+}
 
 /// Install the tracing subscriber. When `file` is set, logs are appended there
 /// (no ANSI) so a live TUI stays clean; otherwise they go to stderr. Default level
@@ -431,14 +443,30 @@ pub async fn run() -> anyhow::Result<()> {
                 crate::tui::watch_loop::run_watch(cfg, base_dir, events, paused, false).await?;
             }
         }
-        Some(Command::Runs) => {
+        Some(Command::Runs { errors }) => {
             let store = SqliteStore::connect(&db_url).await?;
-            let runs = store.list_runs(20).await?;
-            if runs.is_empty() {
-                println!("No runs yet.");
+            let runs = store.list_runs(50).await?;
+            let shown: Vec<_> = runs
+                .iter()
+                .filter(|r| !errors || r.status.as_str() == "error")
+                .collect();
+            if shown.is_empty() {
+                println!(
+                    "{}",
+                    if errors {
+                        "No errored runs."
+                    } else {
+                        "No runs yet."
+                    }
+                );
             }
-            for r in runs {
-                println!("{}  {:<10}  {}", r.id, r.status.as_str(), r.note_path);
+            for r in shown {
+                println!("{:<10}  {}", r.status.as_str(), note_basename(&r.note_path));
+                if r.status.as_str() == "error" {
+                    if let Some(e) = &r.error {
+                        println!("    ↳ {e}");
+                    }
+                }
             }
         }
         Some(Command::Status) => {
@@ -463,7 +491,23 @@ pub async fn run() -> anyhow::Result<()> {
                 if !in_review.is_empty() {
                     println!("awaiting review:");
                     for r in in_review {
-                        println!("  {}", r.note_path);
+                        println!("  {}", note_basename(&r.note_path));
+                    }
+                }
+                // list_runs returns newest first, so these are the most recent failures.
+                let errored: Vec<_> = runs
+                    .iter()
+                    .filter(|r| r.status.as_str() == "error")
+                    .take(10)
+                    .collect();
+                if !errored.is_empty() {
+                    println!("recent errors:");
+                    for r in errored {
+                        println!(
+                            "  {} — {}",
+                            note_basename(&r.note_path),
+                            r.error.as_deref().unwrap_or("(no reason recorded)")
+                        );
                     }
                 }
             }
