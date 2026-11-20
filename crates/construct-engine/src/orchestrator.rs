@@ -750,8 +750,7 @@ impl Orchestrator {
         let is_existing = folders.iter().any(|f| f == &proposal.destination)
             && path.parent() != Some(dest_dir.as_path());
 
-        let outcome: String;
-        if is_existing {
+        let outcome: String = if is_existing {
             // Auto-move into the existing folder. Finalize: status=done, drop run id.
             note.set_str(crate::pipelines::STATUS_KEY, "done");
             note.remove(crate::pipelines::RUN_KEY);
@@ -776,7 +775,7 @@ impl Orchestrator {
                     serde_json::json!({"to": target.to_string_lossy()}),
                 )
                 .await?;
-            outcome = format!("moved→{}", proposal.destination);
+            format!("moved→{}", proposal.destination)
         } else {
             // Recommend only: write block + frontmatter review, mark the run terminal.
             let recommended = crate::pipelines::journal_tag::ensure_journal_tag(
@@ -799,8 +798,8 @@ impl Orchestrator {
                     serde_json::json!({"destination": proposal.destination}),
                 )
                 .await?;
-            outcome = format!("recommended→{}", proposal.destination);
-        }
+            format!("recommended→{}", proposal.destination)
+        };
 
         // --- Step 5: _index log (best-effort) ---
         let moved_dest = is_existing.then(|| proposal.destination.clone());
